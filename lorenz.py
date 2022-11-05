@@ -23,7 +23,7 @@ class lorenzDataset(Dataset):
             c=10,
             b=10,
             h=1,
-            coupled=False,
+            coupled=True,
             time_resolution=0.01,
             seed=42,
             **kwargs):
@@ -96,15 +96,18 @@ class lorenzDataset(Dataset):
 
         # generate some data
         n_steps = y_guide[-1][1] - 1
-        t, X_raw, _, _, _ = run_Lorenz96_2coupled(
-            K=self.K,
-            F=self.F,
-            c=self.c,
-            b=self.b,
-            h=self.h,
-            n_steps=n_steps,
-            resolution=self.time_resolution,
-            seed=self.seed)
+        if self.coupled:
+            t_raw, X_raw, _, _, _ = run_Lorenz96_2coupled(
+                K=self.K,
+                F=self.F,
+                c=self.c,
+                b=self.b,
+                h=self.h,
+                n_steps=n_steps,
+                resolution=self.time_resolution,
+                seed=self.seed)
+        else:
+            raise NotImplementedError
         # X_raw has shape [n_steps, K * 2]
         # the first K columns in X_raw are the X1 (e.g. atmospheric) variable
         # from the Lorenz model; the last K columns in X_raw are the X2 (e.g.
@@ -112,17 +115,24 @@ class lorenzDataset(Dataset):
 
         X = np.array([X_raw[sample[0]:sample[1]] for sample in x_guide])
         Y = np.array([X_raw[sample[0]:sample[1]] for sample in y_guide])
+        t_X = np.array([t_raw[sample[0]:sample[1]] for sample in x_guide])
+        t_Y = np.array([t_raw[sample[0]:sample[1]] for sample in y_guide])
         # X has shape (n_samples, input_steps, K * 2)
-        # y has shape (n_samples, output_steps)
+        # y has shape (n_samples, output_steps, K * 2)
 
         # reshape X to have shape (n_samples, n_nodes, n_node_features)
         # = (n_samples, K, 2 * input_steps)
+        # and reshape Y to have shape (n_samples, K, output_steps)
         X1, X2 = np.split(X, 2, axis=2)
         X_reshaped = np.concatenate((X1, X2), axis=1)
         X_reshaped = np.swapaxes(X_reshaped, 1, 2)
+        Y_reshaped = np.swapaxes(Y[:, :, :self.K], 1, 2)
 
         # convert to Graph structure
-        return [Graph(x=X[i], y=Y[i]) for i in range(self.n_samples)]
+        return [
+            Graph(x=X_reshaped[i], y=Y_reshaped[i], t_X=t_X[i], t_Y=t_Y[i])
+            for i in range(self.n_samples)
+        ]
 
     def compute_adjacency_matrix(self):
         src_nodes = np.concatenate(
