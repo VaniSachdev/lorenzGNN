@@ -95,7 +95,7 @@ class lorenzDataset(Dataset):
             ]
 
         # generate some data
-        n_steps = y_guide[-1][1] - 1
+        n_steps = y_guide[-1][1]
         if self.coupled:
             t_raw, X_raw, _, _, _ = run_Lorenz96_2coupled(
                 K=self.K,
@@ -113,12 +113,12 @@ class lorenzDataset(Dataset):
         # from the Lorenz model; the last K columns in X_raw are the X2 (e.g.
         # oceanic) variable from the Lorenz model
 
-        X = np.array([X_raw[sample[0]:sample[1]] for sample in x_guide])
-        Y = np.array([X_raw[sample[0]:sample[1]] for sample in y_guide])
+        X = np.stack([X_raw[sample[0]:sample[1]] for sample in x_guide])
+        Y = np.stack([X_raw[sample[0]:sample[1]] for sample in y_guide])
         t_X = np.array([t_raw[sample[0]:sample[1]] for sample in x_guide])
         t_Y = np.array([t_raw[sample[0]:sample[1]] for sample in y_guide])
         # X has shape (n_samples, input_steps, K * 2)
-        # y has shape (n_samples, output_steps, K * 2)
+        # Y has shape (n_samples, output_steps, K * 2)
 
         # reshape X to have shape (n_samples, n_nodes, n_node_features)
         # = (n_samples, K, 2 * input_steps)
