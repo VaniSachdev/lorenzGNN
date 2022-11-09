@@ -1,5 +1,6 @@
 # imports
 import numpy as np
+import pandas as pd
 import random
 from scipy.integrate import odeint
 from scipy.sparse import coo_matrix
@@ -16,6 +17,7 @@ class lorenzDataset(Dataset):
             n_samples=42,
             input_steps=50,  # eventually we want something on the order of 1000s; this is small for now for quick prototyping
             output_steps=1,
+            output_delay=4,
             min_buffer=4,
             rand_buffer=False,
             K=36,
@@ -27,15 +29,16 @@ class lorenzDataset(Dataset):
             time_resolution=0.01,
             seed=42,
             **kwargs):
-        # TODO: update docstrings
         """ Args: 
                 n_samples (int): sets of data samples to generate. (each sample 
                     contains <input_steps> steps of input data + <output_steps> 
                     steps of output data)
-                input_steps (int): num of timesteps in each input data sample
-                output_steps (int): num of timesteps in each output data sample
-                min_buffer (int): min number of time_steps between each set of 
-                    data samples
+                input_steps (int): num of timesteps in each input window
+                output_steps (int): num of timesteps in each output window
+                output_delay (int): number of time_steps between end of input 
+                    window and start of output window
+                min_buffer (int): min number of time_steps between end of output
+                    window and start of input window
                 rand_buffer (bool): whether or not the buffer between sets of 
                     data will have a random or fixed length
                 K (int): number of points on the circumference
@@ -53,6 +56,7 @@ class lorenzDataset(Dataset):
         self.n_samples = n_samples
         self.input_steps = input_steps
         self.output_steps = output_steps
+        self.output_delay = output_delay
         self.min_buffer = min_buffer
         self.rand_buffer = rand_buffer
         self.K = K
@@ -82,15 +86,18 @@ class lorenzDataset(Dataset):
         else:
             # equally spaced sets of samples
             x_guide = [
-                (i * (self.min_buffer + self.input_steps + self.output_steps),
-                 i * (self.min_buffer + self.input_steps + self.output_steps) +
-                 self.input_steps) for i in range(self.n_samples)
+                (i * (self.min_buffer + self.input_steps + self.output_steps +
+                      self.output_delay),
+                 i * (self.min_buffer + self.input_steps + self.output_steps +
+                      self.output_delay) + self.input_steps)
+                for i in range(self.n_samples)
             ]
             y_guide = [
-                (i * (self.min_buffer + self.input_steps + self.output_steps) +
-                 self.input_steps,
-                 i * (self.min_buffer + self.input_steps + self.output_steps) +
-                 self.input_steps + self.output_steps)
+                (i * (self.min_buffer + self.input_steps + self.output_steps +
+                      self.output_delay) + self.input_steps + self.output_delay,
+                 i * (self.min_buffer + self.input_steps + self.output_steps +
+                      self.output_delay) + self.input_steps +
+                 self.output_steps + self.output_delay)
                 for i in range(self.n_samples)
             ]
 
@@ -128,6 +135,8 @@ class lorenzDataset(Dataset):
         X_reshaped = np.swapaxes(X_reshaped, 1, 2)
         Y_reshaped = np.swapaxes(Y[:, :, :self.K], 1, 2)
 
+        # TODO: add sinusoids for time of day as an engineered feature
+
         # convert to Graph structure
         return [
             Graph(x=X_reshaped[i], y=Y_reshaped[i], t_X=t_X[i], t_Y=t_Y[i])
@@ -143,6 +152,59 @@ class lorenzDataset(Dataset):
         weights = np.ones(shape=len(src_nodes))
         return coo_matrix((weights, (src_nodes, target_nodes)),
                           shape=(self.K, self.K))
+
+
+def lorenzToDF(
+        K=36,
+        F=8,
+        c=10,
+        b=10,
+        h=1,
+        coupled=True,
+        n_steps=None,  # 30/0.01,
+        n_days=30,
+        time_resolution=0.01,
+        seed=42):
+    """ generate a dataframe of data from the lorenz model. 
+
+        Args: 
+            K (int): number of points on the circumference
+            F (float): forcing constant
+            c (float): time-scale ratio ?
+            b (float): spatial-scale ratio ?
+            h (float): coupling parameter ?
+            coupled (bool): whether to use the coupled 2-layer model or 
+                original 1-layer model
+            n_steps (int): number of timesteps to run the model for
+            n_days (int): number of days to run the model for. Only used of 
+                n_steps is None. 
+            time_resolution (float): timestep for the ODE integration, i.e. 
+                inverse number of timesteps per "day" in the simulation. Only 
+                used of n_steps is None. 
+            seed (int): for reproducibility 
+    """
+    if n_steps is None:
+        n_steps = n_days / time_resolution
+    if coupled:
+        t_raw, X_raw, _, _, _ = run_Lorenz96_2coupled(
+            K=K,
+            F=F,
+            c=c,
+            b=b,
+            h=h,
+            n_steps=n_steps,
+            #   resolution=time_resolution,
+            seed=seed)
+    else:
+        raise NotImplementedError
+
+    print(X_raw.shape)
+    df = pd.DataFrame(X_raw,
+                      columns=['X1_{}'.format(i) for i in range(K)] +
+                      ['X2_{}'.format(i) for i in range(K)],
+                      index=t_raw)
+    df.index.name = 'day'
+    return df
 
 
 #####################
