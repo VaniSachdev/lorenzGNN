@@ -12,23 +12,22 @@ from spektral.data.dataset import Dataset
 class lorenzDataset(Dataset):
     """ A dataset containing windows of data from a Lorenz96 time series. """
 
-    def __init__(
-            self,
-            n_samples=42,
-            input_steps=50,  # eventually we want something on the order of 1000s; this is small for now for quick prototyping
-            output_steps=1,
-            output_delay=4,
-            min_buffer=4,
-            rand_buffer=False,
-            K=36,
-            F=8,
-            c=10,
-            b=10,
-            h=1,
-            coupled=True,
-            time_resolution=0.01,
-            seed=42,
-            **kwargs):
+    def __init__(self,
+                 n_samples=42,
+                 input_steps=50,
+                 output_steps=1,
+                 output_delay=4,
+                 min_buffer=4,
+                 rand_buffer=False,
+                 K=36,
+                 F=8,
+                 c=10,
+                 b=10,
+                 h=1,
+                 coupled=True,
+                 time_resolution=0.01,
+                 seed=42,
+                 **kwargs):
         """ Args: 
                 n_samples (int): sets of data samples to generate. (each sample 
                     contains <input_steps> steps of input data + <output_steps> 
@@ -53,11 +52,11 @@ class lorenzDataset(Dataset):
                 seed (int): for reproducibility 
         """
         self.a = None  # adjacency list
-        self.n_samples = n_samples
-        self.input_steps = input_steps
-        self.output_steps = output_steps
-        self.output_delay = output_delay
-        self.min_buffer = min_buffer
+        self.n_samples = int(n_samples)
+        self.input_steps = int(input_steps)
+        self.output_steps = int(output_steps)
+        self.output_delay = int(output_delay)
+        self.min_buffer = int(min_buffer)
         self.rand_buffer = rand_buffer
         self.K = K
         self.F = F
@@ -74,27 +73,28 @@ class lorenzDataset(Dataset):
         # create adjacency list
         self.a = self.compute_adjacency_matrix()
 
-        # generate a sequence guide thing to determine how our samples will be
+        # generate a sequence of windows to determine how our samples will be
         # spaced out
-        # x_guide is a list of <n_samples> tuples; each element is a tuple
+        # x_windows is a list of <n_samples> tuples; each element is a tuple
         # containing the first (inclusive) and last (non-inclusive) indices of
         # the input data sample
-        # y_guide is the same but for the output data sample
+        # y_windows is the same but for the output data sample
         if self.rand_buffer:
             # TODO: maybe use an exponential distribution to determine buffer space
             raise NotImplementedError
         else:
             # equally spaced sets of samples
-            x_guide = [
+            x_windows = [
                 (i * (self.min_buffer + self.input_steps + self.output_steps +
                       self.output_delay),
                  i * (self.min_buffer + self.input_steps + self.output_steps +
                       self.output_delay) + self.input_steps)
                 for i in range(self.n_samples)
             ]
-            y_guide = [
+            y_windows = [
                 (i * (self.min_buffer + self.input_steps + self.output_steps +
-                      self.output_delay) + self.input_steps + self.output_delay,
+                      self.output_delay) + self.input_steps +
+                 self.output_delay,
                  i * (self.min_buffer + self.input_steps + self.output_steps +
                       self.output_delay) + self.input_steps +
                  self.output_steps + self.output_delay)
@@ -102,44 +102,63 @@ class lorenzDataset(Dataset):
             ]
 
         # generate some data
-        n_steps = y_guide[-1][1]
+        n_steps = y_windows[-1][1]
         if self.coupled:
-            t_raw, X_raw, _, _, _ = run_Lorenz96_2coupled(
-                K=self.K,
-                F=self.F,
-                c=self.c,
-                b=self.b,
-                h=self.h,
-                n_steps=n_steps,
-                resolution=self.time_resolution,
-                seed=self.seed)
+            lorenz_df = lorenzToDF(K=self.K,
+                                   F=self.F,
+                                   c=self.c,
+                                   b=self.b,
+                                   h=self.h,
+                                   coupled=self.coupled,
+                                   n_steps=n_steps,
+                                   time_resolution=self.time_resolution,
+                                   seed=self.seed)
         else:
             raise NotImplementedError
-        # X_raw has shape [n_steps, K * 2]
-        # the first K columns in X_raw are the X1 (e.g. atmospheric) variable
-        # from the Lorenz model; the last K columns in X_raw are the X2 (e.g.
-        # oceanic) variable from the Lorenz model
 
-        X = np.stack([X_raw[sample[0]:sample[1]] for sample in x_guide])
-        Y = np.stack([X_raw[sample[0]:sample[1]] for sample in y_guide])
-        t_X = np.array([t_raw[sample[0]:sample[1]] for sample in x_guide])
-        t_Y = np.array([t_raw[sample[0]:sample[1]] for sample in y_guide])
-        # X has shape (n_samples, input_steps, K * 2)
-        # Y has shape (n_samples, output_steps, K * 2)
+        X = []
+        Y = []
+        t_X = []
+        t_Y = []
+        for i in range(self.n_samples):
+            x_window = x_windows[i]
+            y_window = y_windows[i]
 
-        # reshape X to have shape (n_samples, n_nodes, n_node_features)
-        # = (n_samples, K, 2 * input_steps)
-        # and reshape Y to have shape (n_samples, K, output_steps)
-        X1, X2 = np.split(X, 2, axis=2)
-        X_reshaped = np.concatenate((X1, X2), axis=1)
-        X_reshaped = np.swapaxes(X_reshaped, 1, 2)
-        Y_reshaped = np.swapaxes(Y[:, :, :self.K], 1, 2)
+            # originally, the dataframe has time indexing the rows and node features on the
+            # columns; we want to reshape this so that we have rows indexed by node and
+            # columns to contain the node feature at every time step
+
+            # index and reshape dfs
+            x_df = lorenz_df.iloc[x_window[0]:x_window[1]]
+            t_x = x_df.index
+            x_df = x_df.T
+            x_df = pd.concat([
+                x_df.iloc[:self.K].reset_index(drop=True),
+                x_df.iloc[self.K:].reset_index(drop=True)
+            ],
+                             axis=1)
+
+            # for y, we only want to predict the X1 values, not the X2 values
+            y_df = lorenz_df.iloc[y_window[0]:y_window[1], :self.K]
+            t_y = y_df.index
+            y_df = y_df.T
+
+            # rename columns
+            x_df.columns = ['X1_{}'.format(t)
+                            for t in t_x] + ['X2_{}'.format(t) for t in t_x]
+            y_df.columns = ['X1_{}'.format(t) for t in t_y]
+
+            # note that spektral graphs can't handle dataframes; data must be in nparrays
+            X.append(x_df.to_numpy())
+            Y.append(y_df.to_numpy())
+            t_X.append(t_x.to_numpy())
+            t_Y.append(t_y.to_numpy())
 
         # TODO: add sinusoids for time of day as an engineered feature
 
         # convert to Graph structure
         return [
-            Graph(x=X_reshaped[i], y=Y_reshaped[i], t_X=t_X[i], t_Y=t_Y[i])
+            Graph(x=X[i], y=Y[i], t_X=t_X[i], t_Y=t_Y[i])
             for i in range(self.n_samples)
         ]
 
@@ -153,6 +172,33 @@ class lorenzDataset(Dataset):
         return coo_matrix((weights, (src_nodes, target_nodes)),
                           shape=(self.K, self.K))
 
+    def get_mean(self):
+        """ Calculates the mean and stdev for 1) all X1 variables (includes both feature 
+            and target data), and 2) for all X2 variables
+        
+            Returns:
+                4-tuple: X1_mean, X1_std, X2_mean, X2_std
+        """
+        # get one mean/stdev for all X1 variables (includes the x and y data), and one mean/stdev for all X2 variables
+
+        all_x =  np.concatenate([g.x for g in self])
+        all_y =  np.concatenate([g.y for g in self])
+
+        # print(all_x[:, :all_x.shape[1]//2].shape)
+        # print(all_y.shape)
+        # print(all_x[:, :all_x.shape[1]//2])
+        # print(all_y)
+        # print(np.concatenate([all_x[:, :all_x.shape[1]//2], all_y], axis=1))
+
+        X1_mean = np.concatenate([all_x[:, :all_x.shape[1]//2], all_y], axis=1).mean()
+        X1_std = np.concatenate([all_x[:, :all_x.shape[1]//2], all_y], axis=1).std()
+        X2_mean = all_x[:, all_x.shape[1]//2 :].mean()
+        X2_std = all_x[:, all_x.shape[1]//2 :].std()
+
+        return X1_mean, X1_std, X2_mean, X2_std
+
+    def normalize(self, mean, std):
+        pass
 
 def lorenzToDF(
         K=36,
@@ -198,7 +244,6 @@ def lorenzToDF(
     else:
         raise NotImplementedError
 
-    print(X_raw.shape)
     df = pd.DataFrame(X_raw,
                       columns=['X1_{}'.format(i) for i in range(K)] +
                       ['X2_{}'.format(i) for i in range(K)],
