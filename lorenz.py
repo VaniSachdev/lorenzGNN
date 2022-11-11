@@ -1,7 +1,13 @@
+################################################################################
+# This file contains helper functions for generating and handling data from    #
+# the Lorenz 96 model.                                                         #
+################################################################################
+
 # imports
 import numpy as np
 import pandas as pd
 import random
+import matplotlib.pyplot as plt
 from scipy.integrate import odeint
 from scipy.sparse import coo_matrix
 from spektral.data import Graph
@@ -148,7 +154,8 @@ class lorenzDataset(Dataset):
                             for t in t_x] + ['X2_{}'.format(t) for t in t_x]
             y_df.columns = ['X1_{}'.format(t) for t in t_y]
 
-            # note that spektral graphs can't handle dataframes; data must be in nparrays
+            # note that spektral graphs can't handle dataframes; 
+            # data must be in nparrays
             X.append(x_df.to_numpy())
             Y.append(y_df.to_numpy())
             t_X.append(t_x.to_numpy())
@@ -172,7 +179,7 @@ class lorenzDataset(Dataset):
         return coo_matrix((weights, (src_nodes, target_nodes)),
                           shape=(self.K, self.K))
 
-    def get_mean(self):
+    def get_mean_std(self):
         """ Calculates the mean and stdev for 1) all X1 variables (includes both feature 
             and target data), and 2) for all X2 variables
         
@@ -184,21 +191,58 @@ class lorenzDataset(Dataset):
         all_x =  np.concatenate([g.x for g in self])
         all_y =  np.concatenate([g.y for g in self])
 
-        # print(all_x[:, :all_x.shape[1]//2].shape)
+        # print(all_x.shape)
+        # print(all_x[:, :self.input_steps].shape)
         # print(all_y.shape)
-        # print(all_x[:, :all_x.shape[1]//2])
+        # print(all_x[:, :self.input_steps])
         # print(all_y)
-        # print(np.concatenate([all_x[:, :all_x.shape[1]//2], all_y], axis=1))
+        # print(np.concatenate([all_x[:, :self.input_steps], all_y], axis=1))
 
-        X1_mean = np.concatenate([all_x[:, :all_x.shape[1]//2], all_y], axis=1).mean()
-        X1_std = np.concatenate([all_x[:, :all_x.shape[1]//2], all_y], axis=1).std()
-        X2_mean = all_x[:, all_x.shape[1]//2 :].mean()
-        X2_std = all_x[:, all_x.shape[1]//2 :].std()
+        X1_mean = np.concatenate([all_x[:, :self.input_steps], all_y], axis=1).mean()
+        X1_std = np.concatenate([all_x[:, :self.input_steps], all_y], axis=1).std()
+        X2_mean = all_x[:, self.input_steps :].mean()
+        X2_std = all_x[:, self.input_steps :].std()
 
         return X1_mean, X1_std, X2_mean, X2_std
 
-    def normalize(self, mean, std):
-        pass
+    def normalize(self, X1_mean, X1_std, X2_mean, X2_std):
+        for g in self:
+            # separate X1 and X2 in g.x. recall that g.x has shape 
+            # (K, 2 * input_steps)
+            X1 = g.x[:, :self.input_steps]
+            X2 = g.x[:, self.input_steps:]
+
+            X1_norm = (X1 - X1_mean)/X1_std
+            X2_norm = (X2 - X2_mean)/X2_std
+
+            g.x = np.concatenate([X1_norm, X2_norm], axis=1)
+            g.y = (g.y - X1_mean)/X1_std 
+            # (the target only contains the X1 variable)
+
+    def plot(self, node=0, fig=None, ax0=None, ax1=None, data_type='', color='darkcyan'):
+        """
+            Args: 
+                node (int): the node for which time-series data will be plotted
+                ax0, ax1: (optional) matplotlib axes objects. If None, a new fig with 2 subplots will be created; otherwise, data will be plotted on the existing axes. 
+                data_type (str): (optional) e.g. 'train', 'val', or 'test'
+                color (str): (optional) color of the lines
+
+            Returns: fig and axes
+        """
+        if fig is None or ax0 is None or ax1 is None:
+            fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(20, 8))
+            fig.suptitle("sampled time series after reshaping", size=28)
+            ax0.set_title("X1 (i.e. atmospheric variable) for node {}".format(node), size=20)
+            ax1.set_title("X2 (i.e. oceanic variable) for node {}".format(node), size=20)
+            plt.xlabel('time (days)', size=16)
+
+        for g in self:
+            ax0.plot(g.t_X, g.x[node][:self.input_steps], label=data_type+' inputs', c=color)
+            ax1.plot(g.t_X, g.x[node][self.input_steps:], label=data_type+' inputs', c=color)
+            ax0.scatter(g.t_Y, g.y[node][:self.output_steps],
+                        label=data_type + ' labels', s=30, c=color)
+
+        return fig, (ax0, ax1)
 
 def lorenzToDF(
         K=36,
@@ -250,6 +294,40 @@ def lorenzToDF(
                       index=t_raw)
     df.index.name = 'day'
     return df
+
+def plot_with_predictions(model, graph_dataset, Loader, batch_size=32, node=0, model_name=''):
+    """ 
+        Args:
+            model: a tensorflow/keras/spektral model
+            graph_dataset: a spektral Dataset object
+            node (int): node for which data will be plotted
+            model_name (str): (optional) model name to be displayed on the plot
+    """
+    # set up plot
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(20, 8))
+
+    title = "time series forecasting"
+    if model_name != '':
+        title += " for model " + model_name
+
+    fig.suptitle(title, size=28)
+    ax0.set_title("X1 (i.e. atmospheric variable) for node {}".format(node), size=20)
+    ax1.set_title("X2 (i.e. oceanic variable) for node {}".format(node), size=20)
+    plt.xlabel('time (days)', size=16)
+
+    for g in graph_dataset:
+        ax0.plot(g.t_X, g.x[node][:graph_dataset.input_steps], label='Inputs', c='purple')
+        ax1.plot(g.t_X, g.x[node][graph_dataset.input_steps:], label='Inputs', c='purple')
+        ax0.scatter(g.t_Y, g.y[node][:graph_dataset.output_steps],
+                    label='Labels', s=30, c='green')
+
+    # generate model predictions
+    print('before loader initialization')
+    loader = Loader(dataset=graph_dataset, batch_size=batch_size)
+    print('after loader initialization')
+    predictions = model.predict(loader)
+    print(predictions)
+    # predictions = model(loader.load())
 
 
 #####################
