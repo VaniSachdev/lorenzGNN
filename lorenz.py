@@ -305,7 +305,6 @@ def plot_with_predictions(model, graph_dataset, Loader, batch_size=32, node=0, m
     """
     # set up plot
     fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(20, 8))
-    ax2 = ax0.twinx() # instantiate a second axes that shares the same x-axis
 
     title = "time series forecasting"
     if model_name != '':
@@ -313,11 +312,7 @@ def plot_with_predictions(model, graph_dataset, Loader, batch_size=32, node=0, m
 
     fig.suptitle(title, size=28)
     ax0.set_title("X1 (i.e. atmospheric variable) for node {}".format(node), size=20)
-    ax0.set_ylabel('normalized true value')
-    ax2.set_ylabel('normalized predicted value')
     ax1.set_title("X2 (i.e. oceanic variable) for node {}".format(node), size=20)
-    ax0.tick_params(axis='y', labelcolor='green')
-    ax2.tick_params(axis='y', labelcolor='red')
     plt.xlabel('time (days)', size=16)
 
     for g in graph_dataset:
@@ -329,13 +324,12 @@ def plot_with_predictions(model, graph_dataset, Loader, batch_size=32, node=0, m
     # generate predictions
     loader = Loader(dataset=graph_dataset, batch_size=batch_size)
     predictions = model.predict(loader.load(), steps=loader.steps_per_epoch)
-    print(predictions)
 
     # plot predictions
     for i in range(len(graph_dataset)):
         g = graph_dataset[i]
-        pred = predictions[i]
-        ax2.scatter(g.t_Y, pred,
+        pred = predictions[i][node]
+        ax0.scatter(g.t_Y, pred,
                     label='prediction', s=30, c='red')
 
     return fig, (ax0, ax1)
