@@ -13,27 +13,30 @@ from scipy.sparse import coo_matrix
 from spektral.data import Graph
 from spektral.data.dataset import Dataset
 
+DEFAULT_TIME_RESOLUTION = 0.01
+
 
 # create dataset class for lorenz96 model
 class lorenzDataset(Dataset):
     """ A dataset containing windows of data from a Lorenz96 time series. """
 
-    def __init__(self,
-                 n_samples=42,
-                 input_steps=50,
-                 output_steps=1,
-                 output_delay=4,
-                 min_buffer=4,
-                 rand_buffer=False,
-                 K=36,
-                 F=8,
-                 c=10,
-                 b=10,
-                 h=1,
-                 coupled=True,
-                 time_resolution=0.01,
-                 seed=42,
-                 **kwargs):
+    def __init__(
+            self,
+            n_samples=1 / DEFAULT_TIME_RESOLUTION,  # 1 day
+            input_steps=2 / DEFAULT_TIME_RESOLUTION,  # 2 days
+            output_delay=1 / DEFAULT_TIME_RESOLUTION,  # 1 day
+            output_steps=1,
+            min_buffer=10,
+            rand_buffer=False,
+            K=36,
+            F=8,
+            c=10,
+            b=10,
+            h=1,
+            coupled=True,
+            time_resolution=DEFAULT_TIME_RESOLUTION,
+            seed=42,
+            **kwargs):
         """ Args: 
                 n_samples (int): sets of data samples to generate. (each sample 
                     contains <input_steps> steps of input data + <output_steps> 
@@ -154,7 +157,7 @@ class lorenzDataset(Dataset):
                             for t in t_x] + ['X2_{}'.format(t) for t in t_x]
             y_df.columns = ['X1_{}'.format(t) for t in t_y]
 
-            # note that spektral graphs can't handle dataframes; 
+            # note that spektral graphs can't handle dataframes;
             # data must be in nparrays
             X.append(x_df.to_numpy())
             Y.append(y_df.to_numpy())
@@ -188,8 +191,8 @@ class lorenzDataset(Dataset):
         """
         # get one mean/stdev for all X1 variables (includes the x and y data), and one mean/stdev for all X2 variables
 
-        all_x =  np.concatenate([g.x for g in self])
-        all_y =  np.concatenate([g.y for g in self])
+        all_x = np.concatenate([g.x for g in self])
+        all_y = np.concatenate([g.y for g in self])
 
         # print(all_x.shape)
         # print(all_x[:, :self.input_steps].shape)
@@ -198,28 +201,37 @@ class lorenzDataset(Dataset):
         # print(all_y)
         # print(np.concatenate([all_x[:, :self.input_steps], all_y], axis=1))
 
-        X1_mean = np.concatenate([all_x[:, :self.input_steps], all_y], axis=1).mean()
-        X1_std = np.concatenate([all_x[:, :self.input_steps], all_y], axis=1).std()
-        X2_mean = all_x[:, self.input_steps :].mean()
-        X2_std = all_x[:, self.input_steps :].std()
+        X1_mean = np.concatenate([all_x[:, :self.input_steps], all_y],
+                                 axis=1).mean()
+        X1_std = np.concatenate([all_x[:, :self.input_steps], all_y],
+                                axis=1).std()
+        X2_mean = all_x[:, self.input_steps:].mean()
+        X2_std = all_x[:, self.input_steps:].std()
 
         return X1_mean, X1_std, X2_mean, X2_std
 
     def normalize(self, X1_mean, X1_std, X2_mean, X2_std):
         for g in self:
-            # separate X1 and X2 in g.x. recall that g.x has shape 
+            # separate X1 and X2 in g.x. recall that g.x has shape
             # (K, 2 * input_steps)
             X1 = g.x[:, :self.input_steps]
             X2 = g.x[:, self.input_steps:]
 
-            X1_norm = (X1 - X1_mean)/X1_std
-            X2_norm = (X2 - X2_mean)/X2_std
+            X1_norm = (X1 - X1_mean) / X1_std
+            X2_norm = (X2 - X2_mean) / X2_std
 
             g.x = np.concatenate([X1_norm, X2_norm], axis=1)
-            g.y = (g.y - X1_mean)/X1_std 
+            g.y = (g.y - X1_mean) / X1_std
             # (the target only contains the X1 variable)
 
-    def plot(self, node=0, fig=None, ax0=None, ax1=None, data_type='', color='darkcyan'):
+    def plot(self,
+             node=0,
+             fig=None,
+             ax0=None,
+             ax1=None,
+             data_type='',
+             color='darkcyan',
+             alpha=1):
         """
             Args: 
                 node (int): the node for which time-series data will be plotted
@@ -232,17 +244,30 @@ class lorenzDataset(Dataset):
         if fig is None or ax0 is None or ax1 is None:
             fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(20, 8))
             fig.suptitle("sampled time series after reshaping", size=28)
-            ax0.set_title("X1 (i.e. atmospheric variable) for node {}".format(node), size=20)
-            ax1.set_title("X2 (i.e. oceanic variable) for node {}".format(node), size=20)
+            ax0.set_title(
+                "X1 (i.e. atmospheric variable) for node {}".format(node),
+                size=20)
+            ax1.set_title(
+                "X2 (i.e. oceanic variable) for node {}".format(node), size=20)
             plt.xlabel('time (days)', size=16)
 
         for g in self:
-            ax0.plot(g.t_X, g.x[node][:self.input_steps], label=data_type+' inputs', c=color)
-            ax1.plot(g.t_X, g.x[node][self.input_steps:], label=data_type+' inputs', c=color)
-            ax0.scatter(g.t_Y, g.y[node][:self.output_steps],
-                        label=data_type + ' labels', s=30, c=color)
+            ax0.plot(g.t_X,
+                     g.x[node][:self.input_steps],
+                     label=data_type + ' inputs',
+                     c=color, alpha=alpha)
+            ax1.plot(g.t_X,
+                     g.x[node][self.input_steps:],
+                     label=data_type + ' inputs',
+                     c=color, alpha=alpha)
+            ax0.scatter(g.t_Y,
+                        g.y[node][:self.output_steps],
+                        label=data_type + ' labels',
+                        s=30,
+                        c=color, alpha=alpha)
 
         return fig, (ax0, ax1)
+
 
 def lorenzToDF(
         K=36,
@@ -294,46 +319,6 @@ def lorenzToDF(
                       index=t_raw)
     df.index.name = 'day'
     return df
-
-def plot_with_predictions(model, graph_dataset, Loader, batch_size=32, node=0, model_name=''):
-    """ 
-        Args:
-            model: a tensorflow/keras/spektral model
-            graph_dataset: a spektral Dataset object
-            node (int): node for which data will be plotted
-            model_name (str): (optional) model name to be displayed on the plot
-    """
-    # set up plot
-    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(20, 8))
-
-    title = "time series forecasting"
-    if model_name != '':
-        title += " for model " + model_name
-
-    fig.suptitle(title, size=28)
-    ax0.set_title("X1 (i.e. atmospheric variable) for node {}".format(node), size=20)
-    ax1.set_title("X2 (i.e. oceanic variable) for node {}".format(node), size=20)
-    plt.xlabel('time (days)', size=16)
-
-    for g in graph_dataset:
-        ax0.plot(g.t_X, g.x[node][:graph_dataset.input_steps], label='inputs', c='purple')
-        ax1.plot(g.t_X, g.x[node][graph_dataset.input_steps:], label='inputs', c='purple')
-        ax0.scatter(g.t_Y, g.y[node][:graph_dataset.output_steps],
-                    label='labels', s=30, c='green')
-
-    # generate predictions
-    loader = Loader(dataset=graph_dataset, batch_size=batch_size)
-    predictions = model.predict(loader.load(), steps=loader.steps_per_epoch)
-
-    # plot predictions
-    for i in range(len(graph_dataset)):
-        g = graph_dataset[i]
-        pred = predictions[i][node]
-        ax0.scatter(g.t_Y, pred,
-                    label='prediction', s=30, c='red')
-
-    return fig, (ax0, ax1)
-
 
 
 #####################
