@@ -22,7 +22,7 @@ class lorenzDataset(Dataset):
 
     def __init__(
             self,
-            n_samples=1 / DEFAULT_TIME_RESOLUTION,  # 1 day
+            n_samples=10000,
             input_steps=2 / DEFAULT_TIME_RESOLUTION,  # 2 days
             output_delay=1 / DEFAULT_TIME_RESOLUTION,  # 1 day
             output_steps=1,
@@ -112,6 +112,7 @@ class lorenzDataset(Dataset):
 
         # generate some data
         n_steps = y_windows[-1][1]
+        print('total steps:', n_steps)
         if self.coupled:
             lorenz_df = lorenzToDF(K=self.K,
                                    F=self.F,
@@ -357,9 +358,10 @@ def run_Lorenz96(K=36, F=8, number_of_days=30, nudge=True):
     t = np.arange(0.0, number_of_days,
                   0.01)  # creates the time points we want to see solutiosn for
 
+    print('starting integration')
     X = odeint(lorenz96, X0, t,
                args=(K,
-                     F))  #solves the system of ordinary differential equations
+                     F), ixpr=True)  #solves the system of ordinary differential equations
 
     return t, X, F, K, number_of_days  #gives us the output
 
@@ -438,6 +440,8 @@ def run_Lorenz96_2coupled(K=36,
     if number_of_days is None:
         number_of_days = n_steps * resolution
     t = np.arange(0.0, number_of_days, 0.01)
-    X = odeint(lorenz96_2coupled, X0, t, args=(K, F, c, b, h))
+
+    print('starting integration')
+    X = odeint(lorenz96_2coupled, X0, t, args=(K, F, c, b, h), ixpr=True)
 
     return t, X, F, K, number_of_days

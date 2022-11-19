@@ -35,7 +35,7 @@ def plot_with_predictions(model,
             model_name (str): (optional) model name to be displayed on the plot
     """
     # set up plot
-    fig, axs = plt.subplots(2, 2, figsize=(20, 8))
+    fig, axs = plt.subplots(2, 2, figsize=(40, 16))
 
     title = "time series forecasting"
     if model_name != '':
@@ -64,7 +64,7 @@ def plot_with_predictions(model,
                     c='green')
 
     # generate predictions
-    loader = Loader(dataset=graph_dataset, batch_size=batch_size)
+    loader = Loader(dataset=graph_dataset, batch_size=batch_size, shuffle=False)
     predictions = model.predict(loader.load(), steps=loader.steps_per_epoch)
 
     # plot predictions
