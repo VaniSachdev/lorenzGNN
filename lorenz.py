@@ -4,6 +4,8 @@
 ################################################################################
 
 # imports
+import os
+
 import numpy as np
 import pandas as pd
 import random
@@ -12,8 +14,9 @@ from scipy.integrate import odeint
 from scipy.sparse import coo_matrix
 from spektral.data import Graph
 from spektral.data.dataset import Dataset
+from spektral.datasets.utils import DATASET_FOLDER
 
-DEFAULT_TIME_RESOLUTION = 0.01
+DEFAULT_TIME_RESOLUTION = 100
 
 
 # create dataset class for lorenz96 model
@@ -23,8 +26,8 @@ class lorenzDataset(Dataset):
     def __init__(
             self,
             n_samples=10000,
-            input_steps=2 / DEFAULT_TIME_RESOLUTION,  # 2 days
-            output_delay=1 / DEFAULT_TIME_RESOLUTION,  # 1 day
+            input_steps=2 * DEFAULT_TIME_RESOLUTION,  # 2 days
+            output_delay=1 * DEFAULT_TIME_RESOLUTION,  # 1 day
             output_steps=1,
             min_buffer=10,
             rand_buffer=False,
@@ -36,6 +39,7 @@ class lorenzDataset(Dataset):
             coupled=True,
             time_resolution=DEFAULT_TIME_RESOLUTION,
             seed=42,
+            override=False,
             **kwargs):
         """ Args: 
                 n_samples (int): sets of data samples to generate. (each sample 
@@ -56,8 +60,7 @@ class lorenzDataset(Dataset):
                 h (float): coupling parameter ?
                 coupled (bool): whether to use the coupled 2-layer model or 
                     original 1-layer model
-                time_resolution (float): timestep for the ODE integration, i.e. 
-                    inverse number of timesteps per "day" in the simulation
+                time_resolution (float): number of timesteps per "day" in the simulation, i.e. inverse timestep for the ODE integration
                 seed (int): for reproducibility 
         """
         self.a = None  # adjacency list
@@ -73,15 +76,48 @@ class lorenzDataset(Dataset):
         self.b = b
         self.h = h
         self.coupled = coupled
-        self.time_resolution = time_resolution
+        self.time_resolution = int(time_resolution)
         self.seed = seed
+
+        if override and os.path.exists(self.path):
+            os.remove(self.path)
+
         super().__init__(**kwargs)
 
+    @property
+    def path(self):
+        subpath = "Lorenz/{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}.npz".format(
+            self.n_samples, self.input_steps, self.output_steps,
+            self.output_delay, self.min_buffer, self.rand_buffer, self.K,
+            self.F, self.c, self.b, self.h, self.coupled, self.time_resolution,
+            self.seed)
+        path = os.path.join(DATASET_FOLDER, subpath)
+        return path
+
     def read(self):
-        """ returns a list of Graph objects. """
+        """ reads stored dataset and returns a list of Graph objects. 
+
+            assumes that the dataset file path already exists. (this is handled in super().__init__)
+        """
         # create adjacency list
         self.a = self.compute_adjacency_matrix()
 
+        # read data from computer
+        data = np.load(self.path)
+        # data = np.load(os.path.join(self.path, "data.npz"))
+        X = data['X']
+        Y = data['Y']
+        t_X = data['t_X']
+        t_Y = data['t_Y']
+
+        # convert to Graph structure
+        return [
+            Graph(x=X[i], y=Y[i], t_X=t_X[i], t_Y=t_Y[i])
+            for i in range(self.n_samples)
+        ]
+
+    def download(self):
+        """ generate and store Lorenz data. """
         # generate a sequence of windows to determine how our samples will be
         # spaced out
         # x_windows is a list of <n_samples> tuples; each element is a tuple
@@ -102,8 +138,7 @@ class lorenzDataset(Dataset):
             ]
             y_windows = [
                 (i * (self.min_buffer + self.input_steps + self.output_steps +
-                      self.output_delay) + self.input_steps +
-                 self.output_delay,
+                      self.output_delay) + self.input_steps + self.output_delay,
                  i * (self.min_buffer + self.input_steps + self.output_steps +
                       self.output_delay) + self.input_steps +
                  self.output_steps + self.output_delay)
@@ -165,13 +200,15 @@ class lorenzDataset(Dataset):
             t_X.append(t_x.to_numpy())
             t_Y.append(t_y.to_numpy())
 
-        # TODO: add sinusoids for time of day as an engineered feature
+        # TODO: add sinusoids for time of day as an engineered feature?
 
-        # convert to Graph structure
-        return [
-            Graph(x=X[i], y=Y[i], t_X=t_X[i], t_Y=t_Y[i])
-            for i in range(self.n_samples)
-        ]
+        # Create the directory
+        if not os.path.exists(os.path.dirname(self.path)):
+            os.makedirs(os.path.dirname(self.path))
+
+        # Write the data to file
+        filename = os.path.splitext(self.path)[0]
+        np.savez(filename, X=X, Y=Y, t_X=t_X, t_Y=t_Y)
 
     def compute_adjacency_matrix(self):
         src_nodes = np.concatenate(
@@ -194,13 +231,6 @@ class lorenzDataset(Dataset):
 
         all_x = np.concatenate([g.x for g in self])
         all_y = np.concatenate([g.y for g in self])
-
-        # print(all_x.shape)
-        # print(all_x[:, :self.input_steps].shape)
-        # print(all_y.shape)
-        # print(all_x[:, :self.input_steps])
-        # print(all_y)
-        # print(np.concatenate([all_x[:, :self.input_steps], all_y], axis=1))
 
         X1_mean = np.concatenate([all_x[:, :self.input_steps], all_y],
                                  axis=1).mean()
@@ -248,24 +278,27 @@ class lorenzDataset(Dataset):
             ax0.set_title(
                 "X1 (i.e. atmospheric variable) for node {}".format(node),
                 size=20)
-            ax1.set_title(
-                "X2 (i.e. oceanic variable) for node {}".format(node), size=20)
+            ax1.set_title("X2 (i.e. oceanic variable) for node {}".format(node),
+                          size=20)
             plt.xlabel('time (days)', size=16)
 
         for g in self:
             ax0.plot(g.t_X,
                      g.x[node][:self.input_steps],
                      label=data_type + ' inputs',
-                     c=color, alpha=alpha)
+                     c=color,
+                     alpha=alpha)
             ax1.plot(g.t_X,
                      g.x[node][self.input_steps:],
                      label=data_type + ' inputs',
-                     c=color, alpha=alpha)
+                     c=color,
+                     alpha=alpha)
             ax0.scatter(g.t_Y,
                         g.y[node][:self.output_steps],
                         label=data_type + ' labels',
                         s=30,
-                        c=color, alpha=alpha)
+                        c=color,
+                        alpha=alpha)
 
         return fig, (ax0, ax1)
 
@@ -277,9 +310,9 @@ def lorenzToDF(
         b=10,
         h=1,
         coupled=True,
-        n_steps=None,  # 30/0.01,
+        n_steps=None,  # 30 * 100,
         n_days=30,
-        time_resolution=0.01,
+        time_resolution=100,
         seed=42):
     """ generate a dataframe of data from the lorenz model. 
 
@@ -294,13 +327,12 @@ def lorenzToDF(
             n_steps (int): number of timesteps to run the model for
             n_days (int): number of days to run the model for. Only used of 
                 n_steps is None. 
-            time_resolution (float): timestep for the ODE integration, i.e. 
-                inverse number of timesteps per "day" in the simulation. Only 
-                used of n_steps is None. 
+            time_resolution (float): number of timesteps per "day" in the simulation, i.e. inverse timestep for the ODE integration. Only 
+                used if n_steps is None. 
             seed (int): for reproducibility 
     """
     if n_steps is None:
-        n_steps = n_days / time_resolution
+        n_steps = n_days * time_resolution
     if coupled:
         t_raw, X_raw, _, _, _ = run_Lorenz96_2coupled(
             K=K,
@@ -359,9 +391,8 @@ def run_Lorenz96(K=36, F=8, number_of_days=30, nudge=True):
                   0.01)  # creates the time points we want to see solutiosn for
 
     print('starting integration')
-    X = odeint(lorenz96, X0, t,
-               args=(K,
-                     F), ixpr=True)  #solves the system of ordinary differential equations
+    X = odeint(lorenz96, X0, t, args=(K, F),
+               ixpr=True)  #solves the system of ordinary differential equations
 
     return t, X, F, K, number_of_days  #gives us the output
 
