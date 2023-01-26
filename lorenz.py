@@ -16,6 +16,8 @@ from spektral.data import Graph
 from spektral.data.dataset import Dataset
 from spektral.datasets.utils import DATASET_FOLDER
 
+from datetime import datetime
+
 DEFAULT_TIME_RESOLUTION = 100
 
 
@@ -86,12 +88,26 @@ class lorenzDataset(Dataset):
 
     @property
     def path(self):
-        subpath = "Lorenz/{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}.npz".format(
+        filename = "{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}.npz".format(
             self.n_samples, self.input_steps, self.output_steps,
             self.output_delay, self.min_buffer, self.rand_buffer, self.K,
             self.F, self.c, self.b, self.h, self.coupled, self.time_resolution,
             self.seed)
-        path = os.path.join(DATASET_FOLDER, subpath)
+        if not os.path.exists(
+                '/content/drive/My Drive/_research ML AQ/lorenz 96 gnn/lorenz_data'
+        ):
+            # either running locally or on colab without designated folder/matching file system structure
+            if os.getcwd().startswith('/content/drive'):  # running on colab
+                print(
+                    'using default root path to directory for storing generated lorenz datasets'
+                )
+            subpath = os.path.join('Lorenz', filename)
+            path = os.path.join(DATASET_FOLDER, subpath)
+        else:  # running on colab with custom directory for storing datasets
+            print('storing generated datasets in designated folder')
+            path = os.path.join(
+                '/content/drive/My Drive/_research ML AQ/lorenz 96 gnn/lorenz_data',
+                filename)
         return path
 
     def read(self):
@@ -99,11 +115,12 @@ class lorenzDataset(Dataset):
 
             assumes that the dataset file path already exists. (this is handled in super().__init__)
         """
+        print('reading Lorenz data from stored file')
         # create adjacency list
         self.a = self.compute_adjacency_matrix()
 
         # read data from computer
-        data = np.load(self.path)
+        data = np.load(self.path, allow_pickle=True)
         # data = np.load(os.path.join(self.path, "data.npz"))
         X = data['X']
         Y = data['Y']
@@ -118,6 +135,7 @@ class lorenzDataset(Dataset):
 
     def download(self):
         """ generate and store Lorenz data. """
+        print('generating new Lorenz data and saving to file')
         # generate a sequence of windows to determine how our samples will be
         # spaced out
         # x_windows is a list of <n_samples> tuples; each element is a tuple
@@ -229,15 +247,24 @@ class lorenzDataset(Dataset):
         """
         # get one mean/stdev for all X1 variables (includes the x and y data), and one mean/stdev for all X2 variables
 
+        start = datetime.now()
         all_x = np.concatenate([g.x for g in self])
         all_y = np.concatenate([g.y for g in self])
+        finish_concat = datetime.now()
 
         X1_mean = np.concatenate([all_x[:, :self.input_steps], all_y],
                                  axis=1).mean()
         X1_std = np.concatenate([all_x[:, :self.input_steps], all_y],
                                 axis=1).std()
+        finish_X1 = datetime.now()
+
         X2_mean = all_x[:, self.input_steps:].mean()
         X2_std = all_x[:, self.input_steps:].std()
+        finish_X2 = datetime.now()
+
+        print('time to concat:', finish_concat - start)
+        print('time to get std&mean from X1:', finish_X1 - finish_concat)
+        print('time to get std&mean from X2:', finish_X2 - finish_X1)
 
         return X1_mean, X1_std, X2_mean, X2_std
 

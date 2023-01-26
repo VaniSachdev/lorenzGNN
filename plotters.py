@@ -6,6 +6,9 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
+
+from lorenz import lorenzDataset, DEFAULT_TIME_RESOLUTION
 
 
 def plot_true_vs_pred(y_true, y_pred):
@@ -26,7 +29,7 @@ def plot_with_predictions(model,
                           graph_dataset,
                           Loader,
                           batch_size=32,
-                          node=0,
+                          nodes=[0, 10, 20],
                           model_name=''):
     """ 
         Args:
@@ -35,63 +38,88 @@ def plot_with_predictions(model,
             node (int): node for which data will be plotted
             model_name (str): (optional) model name to be displayed on the plot
     """
-    # set up plot
-    fig, axs = plt.subplots(2, 2, figsize=(40, 16))
-
-    title = "time series forecasting"
-    if model_name != '':
-        title += " for " + model_name
-
-    fig.suptitle(title, size=28)
-    axs[0,
-        0].set_title("X1 (i.e. atmospheric variable) for node {}".format(node),
-                     size=20)
-    axs[1, 0].set_title("X2 (i.e. oceanic variable) for node {}".format(node),
-                        size=20)
-    axs[1, 0].set_xlabel('time (days)', size=16)
-
-    for g in graph_dataset:
-        axs[0, 0].plot(g.t_X,
-                       g.x[node][:graph_dataset.input_steps],
-                       label='inputs',
-                       c='purple',
-                       alpha=0.75)
-        axs[1, 0].plot(g.t_X,
-                       g.x[node][graph_dataset.input_steps:],
-                       label='inputs',
-                       c='purple',
-                       alpha=0.75)
-        axs[0, 0].scatter(g.t_Y,
-                          g.y[node][:graph_dataset.output_steps],
-                          label='labels',
-                          s=30,
-                          c='green')
-
     # generate predictions
     loader = Loader(dataset=graph_dataset, batch_size=batch_size, shuffle=False)
     predictions = model.predict(loader.load(), steps=loader.steps_per_epoch)
 
-    # plot predictions
-    for i in range(len(graph_dataset)):
-        g = graph_dataset[i]
-        pred = predictions[i][node]
-        axs[0, 0].scatter(g.t_Y, pred, label='prediction', s=30, c='red')
-        axs[0, 1].scatter(g.y[node][:graph_dataset.output_steps],
-                          pred,
-                          c='blue')
+    # set up plot
+    fig = plt.figure(tight_layout=True, figsize=(32, 16))
+    gs = GridSpec(6, 2, figure=fig)
+    title = "time series forecasting"
+    if model_name != '':
+        title += " for " + model_name
+    fig.suptitle(title, size=28)
 
-    # ax0.set_xlim(graph_dataset[0].t_X[0], graph_dataset[-1].t_Y[-1])
-    # ax1.set_xlim(graph_dataset[0].t_X[0], graph_dataset[-1].t_Y[-1])
-    # p1 = max(max(predicted_value), max(true_value))
-    # p2 = min(min(predicted_value), min(true_value))
-    # plt.plot([p1, p2], [p1, p2], 'b-')
-    axs[0, 1].plot()
-    axs[0, 1].set_xlabel('True Values')
-    axs[0, 1].set_ylabel('Predictions')
-    axs[0, 1].axis('equal')
-    axs[0, 1].axis('square')
+    # add plots for each node
+    for i, node in enumerate(nodes):
+        # create subplots
+        ax_timeseries = fig.add_subplot(gs[i * 2, 0])
+        ax_zoomtimeseries = fig.add_subplot(gs[i * 2 + 1, 0])
+        ax_performance = fig.add_subplot(gs[i * 2:i * 2 + 2, 1])
 
-    return fig, axs
+        # format subplots
+        ax_timeseries.set_title(
+            "node {} \nX1 (atmospheric variable) time series".format(node),
+            size=20)
+        ax_zoomtimeseries.set_title("time series zoomed into last week",
+                                    size=20)
+        ax_timeseries.set_xlabel('time (days)', size=16)
+        ax_zoomtimeseries.set_xlabel('time (days)', size=16)
+        ax_performance.set_xlabel('True Values')
+        ax_performance.set_ylabel('Predictions')
+        ax_performance.axis('equal')
+        ax_performance.axis('square')
+        ax_performance.set_ylim((-2, 2))
+        ax_performance.set_xlim((-2, 2))
+
+        # plot true time series
+        for g in graph_dataset:
+            # plot input data
+            ax_timeseries.plot(
+                g.t_X,
+                g.x[node][:graph_dataset.input_steps],  # only plotting X1
+                label='inputs',
+                c='purple',
+                alpha=0.75)
+            # ax_zoomtimeseries.plot(
+            #     g.t_X[-7 * DEFAULT_TIME_RESOLUTION:],
+            #     g.x[node][:graph_dataset.input_steps],  # only plotting X1
+            #     label='inputs',
+            #     c='purple',
+            #     alpha=0.75)
+
+            #plot true output
+            ax_timeseries.scatter(g.t_Y,
+                                  g.y[node][:graph_dataset.output_steps],
+                                  label='outputs',
+                                  s=30,
+                                  c='green')
+            # TODO: fix, this is not plotting a week's duration properly
+            ax_zoomtimeseries.scatter(g.t_Y[-7 * DEFAULT_TIME_RESOLUTION:],
+                                      g.y[node][:graph_dataset.output_steps]
+                                      [-7 * DEFAULT_TIME_RESOLUTION:],
+                                      label='output',
+                                      s=30,
+                                      c='green')
+
+        # plot predictions
+        for i, g in enumerate(graph_dataset):
+            pred = predictions[i][node]
+            ax_timeseries.scatter(g.t_Y,
+                                  pred,
+                                  label='prediction',
+                                  s=30,
+                                  c='red')
+            ax_zoomtimeseries.scatter(g.t_Y[-7 * DEFAULT_TIME_RESOLUTION:],
+                                      pred,
+                                      label='prediction',
+                                      s=30,
+                                      c='red')
+            ax_performance.scatter(g.y[node][:graph_dataset.output_steps],
+                                   pred,
+                                   c='blue')
+
+    return fig
 
 
 def plot_data(train, val, test, node=0):
