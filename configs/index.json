@@ -1,0 +1,49 @@
+[
+    {
+        "name": "test_config",
+        "fname": "test_config-20230209-091810",
+        "model_params": {
+            "channels_0": 16,
+            "channels_1": 16,
+            "activation": "relu",
+            "output_activation": null,
+            "use_bias": false,
+            "dropout_rate": 0.5,
+            "l2_reg": 0.00025
+        },
+        "train_params": {
+            "train_size": 10000,
+            "epochs": 35,
+            "optimizer": "Adam",
+            "learning_rate": 2,
+            "loss": "mean_squared_error",
+            "early_stopping": true,
+            "early_stopping_patience": 5,
+            "early_stopping_start_from_epoch": 2
+        }
+    },
+    {
+        "name": "gcn3_5",
+        "fname": "gcn3_5-20230214-111905",
+        "model_params": {
+            "n_labels": 1,
+            "channels_0": 2048,
+            "channels_1": 32,
+            "activation": "relu",
+            "output_activation": null,
+            "use_bias": false,
+            "dropout_rate": 0.5,
+            "l2_reg": 0.00025
+        },
+        "train_params": {
+            "train_size": 1000,
+            "epochs": 1,
+            "optimizer": "Adam",
+            "learning_rate": 0.001,
+            "loss": "mean_squared_error",
+            "early_stopping": true,
+            "early_stopping_patience": 2,
+            "early_stopping_start_from_epoch": 3
+        }
+    }
+]
