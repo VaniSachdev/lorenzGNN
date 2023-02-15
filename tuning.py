@@ -43,7 +43,9 @@ def train_model(train,
 
     # prepare data
     train_loader = MixedLoader(dataset=train, batch_size=32, shuffle=False)
-    val_loader = MixedLoader(dataset=val, batch_size=32, shuffle=False)
+    if eval_val:
+        assert val is not None
+        val_loader = MixedLoader(dataset=val, batch_size=32, shuffle=False)
 
     # compile model
     model.compile(optimizer=optimizer(learning_rate), loss=loss)
@@ -127,7 +129,7 @@ def train_model(train,
 
 
 def make_train_GCN3(train,
-                    val,
+                    val=None,
                     channels_0=2048,
                     channels_1=32,
                     activation="relu",
@@ -174,7 +176,7 @@ def make_train_GCN3(train,
 
 
 def make_train_GCN(train,
-                   val,
+                   val=None,
                    channels=32,
                    activation="relu",
                    use_bias=False,
