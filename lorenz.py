@@ -165,8 +165,7 @@ class lorenzDataset(Dataset):
 
             # convert to Graph structure
             return [
-                Graph(x=X[i], y=Y[i], t=t[i])
-                for i in range(self.n_samples)
+                Graph(x=X[i], y=Y[i], t=t[i]) for i in range(self.n_samples)
             ]
 
     def download(self):
@@ -189,19 +188,15 @@ class lorenzDataset(Dataset):
             np.savez(filename, X=X, Y=Y, t_X=t_X, t_Y=t_Y)
 
         elif self.predict_from == 'X2':
-            X, Y, t_X = self.generate_paired_data()
-            t_Y = None
+            X, Y, t = self.generate_paired_data()
             # Write the data to file
-            np.savez(filename, X=X, Y=Y, t_X=t_X)
+            np.savez(filename, X=X, Y=Y, t=t)
 
         elif self.predict_from == 'X2_window':
             raise NotImplementedError
 
         else:
             raise ValueError('invalid input for prediction_from argument')
-
-
-        
 
     def generate_window_data(self):
         print('generating window data')
@@ -281,29 +276,42 @@ class lorenzDataset(Dataset):
             t_X.append(t_x.to_numpy())
             t_Y.append(t_y.to_numpy())
 
+        print('X.shape', len(X))
+        print('Y.shape', len(Y))
+        print('t_X.shape', len(t_X))
+        print('t_Y.shape', len(t_Y))
+        print('X[0].shape', X[0].shape)
         return X, Y, t_X, t_Y
 
     def generate_paired_data(self):
         print('generating paired data')
         if self.coupled:
-            lorenz_df = lorenzToDF(K=self.K,
-                                   F=self.F,
-                                   c=self.c,
-                                   b=self.b,
-                                   h=self.h,
-                                   coupled=self.coupled,
-                                   n_steps=self.n_samples, # since 1 sample/window => n_samples total steps
-                                #    time_resolution=self.time_resolution,
-                                   seed=self.seed)
-            
+            lorenz_df = lorenzToDF(
+                K=self.K,
+                F=self.F,
+                c=self.c,
+                b=self.b,
+                h=self.h,
+                coupled=self.coupled,
+                n_steps=self.
+                n_samples,  # since 1 sample/window => n_samples total steps
+                time_resolution=self.time_resolution,
+                seed=self.seed)
+
         else:
             raise NotImplementedError
-        X = lorenz_df.iloc[self.K:].T.to_numpy() # i.e. the X2 variable
-        Y = lorenz_df.iloc[:self.K].T.to_numpy() # i.e. the X1 variable we want to predict
-        t = lorenz_df.index
+        X = lorenz_df.iloc[:, self.K:].to_numpy()  # i.e. the X2 variable
+        Y = lorenz_df.iloc[:, :self.K].to_numpy(
+        )  # i.e. the X1 variable we want to predict
+        t = lorenz_df.index.to_numpy()
 
+        X = X[:, :, np.newaxis]  # reshape to avoid warning from spektral
+        Y = Y[:, :, np.newaxis]
+
+        print('X.shape', X.shape)
+        print('Y.shape', Y.shape)
+        print('t.shape', t.shape)
         return X, Y, t
-        
 
     def compute_adjacency_matrix(self):
         src_nodes = np.concatenate(
@@ -386,23 +394,39 @@ class lorenzDataset(Dataset):
                           size=20)
             plt.xlabel('time (days)', size=16)
 
-        for g in self:
-            ax0.plot(g.t_X,
-                     g.x[node][:self.input_steps],
-                     label=data_type + ' inputs',
-                     c=color,
-                     alpha=alpha)
-            ax1.plot(g.t_X,
-                     g.x[node][self.input_steps:],
-                     label=data_type + ' inputs',
-                     c=color,
-                     alpha=alpha)
-            ax0.scatter(g.t_Y,
-                        g.y[node][:self.output_steps],
-                        label=data_type + ' labels',
-                        s=30,
-                        c=color,
-                        alpha=alpha)
+        if self.predict_from == "X1X2_window":
+            for g in self:
+                ax0.plot(g.t_X,
+                         g.x[node][:self.input_steps],
+                         label=data_type + ' inputs',
+                         c=color,
+                         alpha=alpha)
+                ax1.plot(g.t_X,
+                         g.x[node][self.input_steps:],
+                         label=data_type + ' inputs',
+                         c=color,
+                         alpha=alpha)
+                ax0.scatter(g.t_Y,
+                            g.y[node][:self.output_steps],
+                            label=data_type + ' labels',
+                            s=30,
+                            c=color,
+                            alpha=alpha)
+        elif self.predict_from == "X2":
+            for g in self:
+                ax1.scatter(g.t,
+                            g.x[node],
+                            label=data_type + ' inputs',
+                            c=color,
+                            alpha=alpha)
+                ax0.scatter(g.t,
+                            g.y[node],
+                            label=data_type + ' labels',
+                            s=30,
+                            c=color,
+                            alpha=alpha)
+        else:
+            raise NotImplementedError
 
         return fig, (ax0, ax1)
 
@@ -444,7 +468,7 @@ def lorenzToDF(
             b=b,
             h=h,
             n_steps=n_steps,
-              resolution=time_resolution,
+            resolution=time_resolution,
             seed=seed)
     else:
         raise NotImplementedError
@@ -552,16 +576,21 @@ def lorenz96_2coupled(X, t, K, F, c, b, h):
     return dX_dt
 
 
-def run_Lorenz96_2coupled(K=36,
-                          F=8,
-                          c=10,
-                          b=10,
-                          h=1,
-                          n_steps=300,
-                          resolution=0.01,
-                          number_of_days=None,
-                          seed=42):
-    """ (from Prof. Kavassalis) """
+def run_Lorenz96_2coupled(
+        K=36,
+        F=8,
+        c=10,
+        b=10,
+        h=1,
+        n_steps=300,
+        resolution=DEFAULT_TIME_RESOLUTION,  # 100
+        number_of_days=None,
+        seed=42):
+    """ (modified from Prof. Kavassalis) 
+    
+        note here that resolution = # of steps per day (e.g. 100 steps per 
+        day), not the delta t (which would be 0.01)
+    """
     random.seed(seed)
 
     # Initial state (equilibrium)
@@ -572,8 +601,12 @@ def run_Lorenz96_2coupled(K=36,
        1] = X0[random.randint(0, K) - 1] + random.uniform(0, .01)
 
     if number_of_days is None:
-        number_of_days = n_steps * resolution
-    t = np.arange(0.0, number_of_days, 0.01)
+        number_of_days = n_steps / resolution
+    t = np.arange(0.0, number_of_days, 1 / resolution)
+
+    print('integrating for {} days at {} resolution (i.e. {} pts)'.format(
+        number_of_days, resolution, len(t)))
+    print('len t vs n_steps', len(t), n_steps, len(t) == n_steps)
 
     print('starting integration')
     X = odeint(lorenz96_2coupled, X0, t, args=(K, F, c, b, h), ixpr=True)

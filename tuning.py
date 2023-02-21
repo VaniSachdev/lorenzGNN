@@ -119,7 +119,7 @@ def train_model(train,
             "data_params": data_params
         }
 
-        # append to index
+        # append to config index
         with open("configs/index.json", "r") as indexfile:
             index = json.load(indexfile)
             index.append(config)
@@ -235,13 +235,13 @@ def plot_model_results(train,
         fig_train_loss, ax = plt.subplots(1, 1, figsize=(4, 3))
         ax.plot(history.history['loss'], label='loss')
         ax.text(x=epochs,
-                y=history.history['loss'][-1],
+                y=ax.get_ylim()[1],
                 s="final train loss: {:.2f}".format(
                     history.history['loss'][-1]))
         if 'val_loss' in history.history:
             ax.plot(history.history['val_loss'], label='validation loss')
             ax.text(x=epochs,
-                    y=history.history['val_loss'][-1],
+                    y=0.5 * ax.get_ylim()[1],
                     s="final val loss: {:.2f}".format(
                         history.history['val_loss'][-1]))
         ax.set_ylabel('mean squared error')
@@ -277,7 +277,8 @@ def plot_model_results(train,
             print('no file name, could not save')
         else:
             fdir = os.path.join('figs', fname)
-            os.makedirs(fdir)
+            if not os.path.exists(fdir):
+                os.makedirs(fdir)
 
             fig_train_loss.savefig(os.path.join(fdir, 'fig_train_loss'))
             fig_train_pred.savefig(os.path.join(fdir, 'fig_train_pred'))
