@@ -27,6 +27,7 @@ class lorenzDataset(Dataset):
 
     def __init__(
             self,
+            predict_from,
             n_samples=10000,
             input_steps=2 * DEFAULT_TIME_RESOLUTION,  # 2 days
             output_delay=1 * DEFAULT_TIME_RESOLUTION,  # 1 day
@@ -44,6 +45,8 @@ class lorenzDataset(Dataset):
             override=False,
             **kwargs):
         """ Args: 
+                predict_from (str): "X1X2_window", "X2_window", or "X2". 
+                    indicates the structure of input/target data
                 n_samples (int): sets of data samples to generate. (each sample 
                     contains <input_steps> steps of input data + <output_steps> 
                     steps of output data)
@@ -64,8 +67,11 @@ class lorenzDataset(Dataset):
                     original 1-layer model
                 time_resolution (float): number of timesteps per "day" in the simulation, i.e. inverse timestep for the ODE integration
                 seed (int): for reproducibility 
+                override (bool): whether or not to regenerate data that was 
+                    already generated previously
         """
         self.a = None  # adjacency list
+        self.predict_from = predict_from
         self.n_samples = int(n_samples)
         self.input_steps = int(input_steps)
         self.output_steps = int(output_steps)
@@ -88,14 +94,16 @@ class lorenzDataset(Dataset):
 
     @property
     def path(self):
-        filename = "{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}.npz".format(
-            self.n_samples, self.input_steps, self.output_steps,
-            self.output_delay, self.min_buffer, self.rand_buffer, self.K,
-            self.F, self.c, self.b, self.h, self.coupled, self.time_resolution,
-            self.seed)
-        if not os.path.exists(
-                '/content/drive/My Drive/_research ML AQ/lorenz 96 gnn/lorenz_data'
-        ):
+        """ define the file path where data will be stored/extracted. """
+        drive_base_path = '/content/drive/My Drive/_research ML AQ/lorenz 96 gnn/lorenz_data'  # obviously this must change depending on your own computer's file system
+        filename = "{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}.npz".format(
+            self.predict_from, self.n_samples, self.input_steps,
+            self.output_steps, self.output_delay, self.min_buffer,
+            self.rand_buffer, self.K, self.F, self.c, self.b, self.h,
+            self.coupled, self.time_resolution, self.seed)
+
+        # check if we're in colab or not because the file paths will be different
+        if not os.path.exists(drive_base_path):
             # either running locally or on colab without designated folder/matching file system structure
             if os.getcwd().startswith('/content/drive'):  # running on colab
                 print(
@@ -105,10 +113,25 @@ class lorenzDataset(Dataset):
             path = os.path.join(DATASET_FOLDER, subpath)
         else:  # running on colab with custom directory for storing datasets
             print('storing generated datasets in designated folder')
-            path = os.path.join(
-                '/content/drive/My Drive/_research ML AQ/lorenz 96 gnn/lorenz_data',
-                filename)
+            path = os.path.join(drive_base_path, filename)
         return path
+
+    def get_config(self):
+        return dict(predict_from=self.predict_from,
+                    n_samples=self.n_samples,
+                    input_steps=self.input_steps,
+                    output_steps=self.output_steps,
+                    output_delay=self.output_delay,
+                    min_buffer=self.min_buffer,
+                    rand_buffer=self.rand_buffer,
+                    K=self.K,
+                    F=self.F,
+                    c=self.c,
+                    b=self.b,
+                    h=self.h,
+                    coupled=self.coupled,
+                    time_resolution=self.time_resolution,
+                    seed=self.seed)
 
     def read(self):
         """ reads stored dataset and returns a list of Graph objects. 
@@ -142,6 +165,26 @@ class lorenzDataset(Dataset):
         # containing the first (inclusive) and last (non-inclusive) indices of
         # the input data sample
         # y_windows is the same but for the output data sample
+        if self.predict_from == 'X1X2_window':
+            X, Y, t_X, t_Y = self.generate_window_data()
+        elif self.predict_from == 'X2_window':
+            raise NotImplementedError
+        elif self.predict_from == 'X2':
+            X, Y, t_X = self.generate_paired_data()
+            t_Y = None
+        else:
+            raise ValueError('invalid input for prediction_from argument')
+
+        # Create the directory
+        if not os.path.exists(os.path.dirname(self.path)):
+            os.makedirs(os.path.dirname(self.path))
+
+        # Write the data to file
+        filename = os.path.splitext(self.path)[0]
+        np.savez(filename, X=X, Y=Y, t_X=t_X, t_Y=t_Y)
+
+    def generate_window_data(self):
+        print('generating window data')
         if self.rand_buffer:
             # TODO: maybe use an exponential distribution to determine buffer space
             raise NotImplementedError
@@ -218,15 +261,27 @@ class lorenzDataset(Dataset):
             t_X.append(t_x.to_numpy())
             t_Y.append(t_y.to_numpy())
 
-        # TODO: add sinusoids for time of day as an engineered feature?
+        return X, Y, t_X, t_Y
 
-        # Create the directory
-        if not os.path.exists(os.path.dirname(self.path)):
-            os.makedirs(os.path.dirname(self.path))
-
-        # Write the data to file
-        filename = os.path.splitext(self.path)[0]
-        np.savez(filename, X=X, Y=Y, t_X=t_X, t_Y=t_Y)
+    def generate_paired_data(self):
+        print('generating paired data')
+        if self.coupled:
+            lorenz_df = lorenzToDF(K=self.K,
+                                   F=self.F,
+                                   c=self.c,
+                                   b=self.b,
+                                   h=self.h,
+                                   coupled=self.coupled,
+                                   n_steps=self.n_samples, # since 1 sample/window => n_samples total steps
+                                #    time_resolution=self.time_resolution,
+                                   seed=self.seed)
+            
+        else:
+            raise NotImplementedError
+        X = []
+        Y = []
+        t_X = []
+        t_Y = []
 
     def compute_adjacency_matrix(self):
         src_nodes = np.concatenate(

@@ -122,7 +122,7 @@ def plot_with_predictions(model,
     return fig
 
 
-def plot_data(train, val, test, node=0):
+def plot_data(train, val, test=None, node=0):
     """ Plot the time series data for a single node in the graph. 
     
         Returns: 
@@ -157,26 +157,31 @@ def plot_data(train, val, test, node=0):
                                data_type='val',
                                color=colors[1],
                                alpha=0.2)
-    print('plotting test')
-    fig, (ax0, ax1) = test.plot(node,
-                                fig,
-                                ax0,
-                                ax1,
-                                data_type='test',
-                                color=colors[2],
-                                alpha=0.2)
+    if test is None:
+        print('no training data to plot')
+    else:
+        print('plotting test')
+        fig, (ax0, ax1) = test.plot(node,
+                                    fig,
+                                    ax0,
+                                    ax1,
+                                    data_type='test',
+                                    color=colors[2],
+                                    alpha=0.2)
 
-    ax0.set_xlim(train[0].t_X[0], test[-1].t_Y[-1])
-    ax1.set_xlim(train[0].t_X[0], test[-1].t_Y[-1])
+    # ax0.set_xlim(train[0].t_X[0], test[-1].t_Y[-1])
+    # ax1.set_xlim(train[0].t_X[0], test[-1].t_Y[-1])
+    ax1.set_xlim(ax0.get_xlim())
 
     print('editing legend')
     # create legend
     ax0.legend(loc="upper left")
+    # TODO: fix legend labels
     ax0.legend(handles=ax0.get_legend().legendHandles[0:6])
-    leg = ax0.get_legend()
-    [
-        leg.legendHandles[i].set_color(colors[i // 2])
-        for i in range(len(leg.legendHandles))
-    ]
+    # leg = ax0.get_legend()
+    # [
+    #     leg.legendHandles[i].set_color(colors[i // 2])
+    #     for i in range(len(leg.legendHandles))
+    # ]
 
     return fig, (ax0, ax1)

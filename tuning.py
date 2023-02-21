@@ -110,11 +110,13 @@ def train_model(train,
             'early_stopping_patience': early_stopping_patience,
             'early_stopping_start_from_epoch': early_stopping_start_from_epoch
         }
+        data_params = train.get_config()
         config = {
             "name": model.name,
             "fname": fname,
             "model_params": model_params,
-            "train_params": train_params
+            "train_params": train_params,
+            "data_params": data_params
         }
 
         # append to index
