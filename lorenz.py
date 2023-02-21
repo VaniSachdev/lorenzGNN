@@ -50,14 +50,14 @@ class lorenzDataset(Dataset):
                 n_samples (int): sets of data samples to generate. (each sample 
                     contains <input_steps> steps of input data + <output_steps> 
                     steps of output data)
-                input_steps (int): num of timesteps in each input window
-                output_steps (int): num of timesteps in each output window
+                input_steps (int): num of timesteps in each input window (only used if predict_from uses a window)
+                output_steps (int): num of timesteps in each output window (only used if predict_from uses a window)
                 output_delay (int): number of time_steps between end of input 
-                    window and start of output window
+                    window and start of output window (only used if predict_from uses a window)
                 min_buffer (int): min number of time_steps between end of output
-                    window and start of input window
+                    window and start of input window (only used if predict_from uses a window)
                 rand_buffer (bool): whether or not the buffer between sets of 
-                    data will have a random or fixed length
+                    data will have a random or fixed length (only used if predict_from uses a window)
                 K (int): number of points on the circumference
                 F (float): forcing constant
                 c (float): time-scale ratio ?
@@ -145,19 +145,37 @@ class lorenzDataset(Dataset):
         # read data from computer
         data = np.load(self.path, allow_pickle=True)
         # data = np.load(os.path.join(self.path, "data.npz"))
-        X = data['X']
-        Y = data['Y']
-        t_X = data['t_X']
-        t_Y = data['t_Y']
 
-        # convert to Graph structure
-        return [
-            Graph(x=X[i], y=Y[i], t_X=t_X[i], t_Y=t_Y[i])
-            for i in range(self.n_samples)
-        ]
+        if self.predict_from == 'X1X2_window':
+            X = data['X']
+            Y = data['Y']
+            t_X = data['t_X']
+            t_Y = data['t_Y']
+
+            # convert to Graph structure
+            return [
+                Graph(x=X[i], y=Y[i], t_X=t_X[i], t_Y=t_Y[i])
+                for i in range(self.n_samples)
+            ]
+
+        if self.predict_from == 'X2':
+            X = data['X']
+            Y = data['Y']
+            t = data['t']
+
+            # convert to Graph structure
+            return [
+                Graph(x=X[i], y=Y[i], t=t[i])
+                for i in range(self.n_samples)
+            ]
 
     def download(self):
         """ generate and store Lorenz data. """
+        # Create the directory
+        if not os.path.exists(os.path.dirname(self.path)):
+            os.makedirs(os.path.dirname(self.path))
+        filename = os.path.splitext(self.path)[0]
+
         print('generating new Lorenz data and saving to file')
         # generate a sequence of windows to determine how our samples will be
         # spaced out
@@ -167,21 +185,23 @@ class lorenzDataset(Dataset):
         # y_windows is the same but for the output data sample
         if self.predict_from == 'X1X2_window':
             X, Y, t_X, t_Y = self.generate_window_data()
-        elif self.predict_from == 'X2_window':
-            raise NotImplementedError
+            # Write the data to file
+            np.savez(filename, X=X, Y=Y, t_X=t_X, t_Y=t_Y)
+
         elif self.predict_from == 'X2':
             X, Y, t_X = self.generate_paired_data()
             t_Y = None
+            # Write the data to file
+            np.savez(filename, X=X, Y=Y, t_X=t_X)
+
+        elif self.predict_from == 'X2_window':
+            raise NotImplementedError
+
         else:
             raise ValueError('invalid input for prediction_from argument')
 
-        # Create the directory
-        if not os.path.exists(os.path.dirname(self.path)):
-            os.makedirs(os.path.dirname(self.path))
 
-        # Write the data to file
-        filename = os.path.splitext(self.path)[0]
-        np.savez(filename, X=X, Y=Y, t_X=t_X, t_Y=t_Y)
+        
 
     def generate_window_data(self):
         print('generating window data')
@@ -278,10 +298,12 @@ class lorenzDataset(Dataset):
             
         else:
             raise NotImplementedError
-        X = []
-        Y = []
-        t_X = []
-        t_Y = []
+        X = lorenz_df.iloc[self.K:].T.to_numpy() # i.e. the X2 variable
+        Y = lorenz_df.iloc[:self.K].T.to_numpy() # i.e. the X1 variable we want to predict
+        t = lorenz_df.index
+
+        return X, Y, t
+        
 
     def compute_adjacency_matrix(self):
         src_nodes = np.concatenate(
@@ -409,8 +431,7 @@ def lorenzToDF(
             n_steps (int): number of timesteps to run the model for
             n_days (int): number of days to run the model for. Only used of 
                 n_steps is None. 
-            time_resolution (float): number of timesteps per "day" in the simulation, i.e. inverse timestep for the ODE integration. Only 
-                used if n_steps is None. 
+            time_resolution (float): number of timesteps per "day" in the simulation, i.e. inverse timestep for the ODE integration. 
             seed (int): for reproducibility 
     """
     if n_steps is None:
@@ -423,7 +444,7 @@ def lorenzToDF(
             b=b,
             h=h,
             n_steps=n_steps,
-            #   resolution=time_resolution,
+              resolution=time_resolution,
             seed=seed)
     else:
         raise NotImplementedError
