@@ -43,8 +43,9 @@ def plot_with_predictions(model,
     predictions = model.predict(loader.load(), steps=loader.steps_per_epoch)
 
     # set up plot
-    fig = plt.figure(tight_layout=True, figsize=(32, 16))
-    gs = GridSpec(6, 2, figure=fig)
+    n_nodes = len(nodes)
+    fig = plt.figure(tight_layout=True, figsize=(25, 5 * n_nodes))
+    gs = GridSpec(2 * n_nodes, 2, figure=fig)
     title = "time series forecasting"
     if model_name != '':
         title += " for " + model_name
@@ -71,6 +72,7 @@ def plot_with_predictions(model,
         ax_performance.set_ylabel('Predictions')
         ax_performance.axis('equal')
         ax_performance.axis('square')
+        # ax_performance.set_aspect('equal', 'box')
         ax_performance.set_ylim((-2, 2))
         ax_performance.set_xlim((-2, 2))
 
@@ -118,10 +120,16 @@ def plot_with_predictions(model,
                 #                           label='prediction',
                 #                           s=30,
                 #                           c='red')
+
                 # plot performance
                 ax_performance.scatter(g.y[node][:graph_dataset.output_steps],
                                        pred,
                                        c='blue')
+                ax_performance.plot(ax_performance.get_xlim(),
+                                    ax_performance.get_xlim())
+                ax_performance.plot([0, 0], ax_performance.get_xlim())
+                ax_performance.plot(ax_performance.get_xlim(), [0, 0])
+
         elif graph_dataset.predict_from == "X2":
             for i, g in enumerate(graph_dataset):
                 # plot input data
@@ -136,12 +144,23 @@ def plot_with_predictions(model,
 
                 # plot performance
                 ax_performance.scatter(g.y[node], pred, c='blue')
+                ax_performance.plot(ax_performance.get_xlim(),
+                                    ax_performance.get_xlim())
+                ax_performance.plot([0, 0], ax_performance.get_xlim())
+                ax_performance.plot(ax_performance.get_xlim(), [0, 0])
 
         ax_X2.set_xlim(ax_X1.get_xlim())
     return fig
 
 
-def plot_data(train, val, test=None, node=0, fig=None, ax0=None, ax1=None):
+def plot_data(train,
+              val=None,
+              test=None,
+              node=0,
+              fig=None,
+              ax0=None,
+              ax1=None,
+              alpha=0.2):
     """ Plot the time series data for a single node in the graph. 
     
         Returns: 
@@ -167,15 +186,18 @@ def plot_data(train, val, test=None, node=0, fig=None, ax0=None, ax1=None):
                                  ax1,
                                  data_type='train',
                                  color=colors[0],
-                                 alpha=0.2)
-    print('plotting val')
-    fig, (ax0, ax1) = val.plot(node,
-                               fig,
-                               ax0,
-                               ax1,
-                               data_type='val',
-                               color=colors[1],
-                               alpha=0.2)
+                                 alpha=alpha)
+    if val is None:
+        print('no val data to plot')
+    else:
+        print('plotting val')
+        fig, (ax0, ax1) = val.plot(node,
+                                   fig,
+                                   ax0,
+                                   ax1,
+                                   data_type='val',
+                                   color=colors[1],
+                                   alpha=alpha)
     if test is None:
         print('no training data to plot')
     else:
@@ -186,11 +208,11 @@ def plot_data(train, val, test=None, node=0, fig=None, ax0=None, ax1=None):
                                     ax1,
                                     data_type='test',
                                     color=colors[2],
-                                    alpha=0.2)
+                                    alpha=alpha)
 
     # ax0.set_xlim(train[0].t_X[0], test[-1].t_Y[-1])
     # ax1.set_xlim(train[0].t_X[0], test[-1].t_Y[-1])
-    ax0.set_xlim(left=0)
+    # ax0.set_xlim(left=0)
     ax1.set_xlim(ax0.get_xlim())
 
     print('editing legend')

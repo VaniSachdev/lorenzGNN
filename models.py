@@ -76,7 +76,9 @@ class GCN3(Model):
         x = self._d0(x)
         x = self._gcn0([x, a])
         x = self._d1(x)
-        return self._gcn1([x, a])
+        x = self._gcn1([x, a])
+        x = self._d2(x)
+        return self._gcn2([x, a])
 
 
 class NaiveZero(Model):

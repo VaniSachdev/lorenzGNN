@@ -21,13 +21,12 @@ from datetime import datetime
 DEFAULT_TIME_RESOLUTION = 100
 
 
-# create dataset class for lorenz96 model
-class lorenzDataset(Dataset):
-    """ A dataset containing windows of data from a Lorenz96 time series. """
+# wrapper for the lorenzDataset with train/test splitting and normalization bundled in
+class lorenzDatasetWrapper():
 
     def __init__(
             self,
-            predict_from,
+            predict_from="X1X2_window",
             n_samples=10000,
             input_steps=2 * DEFAULT_TIME_RESOLUTION,  # 2 days
             output_delay=1 * DEFAULT_TIME_RESOLUTION,  # 1 day
@@ -41,6 +40,128 @@ class lorenzDataset(Dataset):
             h=1,
             coupled=True,
             time_resolution=DEFAULT_TIME_RESOLUTION,
+            init_buffer_steps=100,
+            return_buffer=True,
+            seed=42,
+            override=False,
+            train_pct=1.0,
+            val_pct=0.0,
+            test_pct=0.0):
+
+        assert abs(train_pct + val_pct + test_pct - 1.0) < 0.001
+        # use error term due to float errors
+
+        # set up variables
+        self.predict_from = predict_from
+        self.n_samples = int(n_samples)
+        self.K = K
+        self.F = F
+        self.c = c
+        self.b = b
+        self.h = h
+        self.coupled = coupled
+        self.time_resolution = int(time_resolution)
+        self.init_buffer_steps = init_buffer_steps
+        self.return_buffer = return_buffer
+        self.seed = seed
+
+        if self.predict_from == "X2":
+            self.input_steps = 1
+            self.output_steps = 1
+            self.output_delay = 0
+            self.min_buffer = 0
+            self.rand_buffer = rand_buffer
+        else:
+            self.input_steps = int(input_steps)
+            self.output_steps = int(output_steps)
+            self.output_delay = int(output_delay)
+            self.min_buffer = int(min_buffer)
+            self.rand_buffer = rand_buffer
+
+        self.train_pct = train_pct
+        self.val_pct = val_pct
+        self.test_pct = test_pct
+
+        # generate dataset
+        dataset_raw = lorenzDataset(predict_from=self.predict_from,
+                                    n_samples=self.n_samples,
+                                    input_steps=self.input_steps,
+                                    output_delay=self.output_delay,
+                                    output_steps=self.output_steps,
+                                    min_buffer=self.min_buffer,
+                                    rand_buffer=self.rand_buffer,
+                                    K=self.K,
+                                    F=self.F,
+                                    c=self.c,
+                                    b=self.b,
+                                    h=self.h,
+                                    coupled=self.coupled,
+                                    time_resolution=self.time_resolution,
+                                    init_buffer_steps=self.init_buffer_steps,
+                                    return_buffer=self.return_buffer,
+                                    seed=self.seed,
+                                    override=override)
+        print('dataset_raw', dataset_raw)
+        # split dataset
+        if init_buffer_steps > 0 and return_buffer:
+            self.buffer = dataset_raw[:init_buffer_steps]
+            dataset = dataset_raw[init_buffer_steps:]
+        else:
+            self.buffer = None
+            dataset = dataset_raw
+
+        train_bound = round(train_pct * dataset.n_graphs)
+        val_bound = round((train_pct + val_pct) * dataset.n_graphs)
+
+        self.train = dataset[:train_bound]
+        self.val = None if train_pct == 1 else dataset[train_bound:val_bound]
+        self.test = None if train_pct + val_pct == 1 else dataset[val_bound:]
+
+        # normalize dataset (replaced existing train, val, test with normalized versions)
+        self.normalize()
+
+    def normalize(self):
+        norm_input = self.train if self.buffer is None else self.buffer + self.train
+        # including the buffer data helps to stabilize the mean and std when the train data is very small
+        # but theoretically should drop once we use larger datasets because the buffer is throwaway data (to give the Lorenz model time to settle)
+
+        self.X1_mean, self.X1_std, self.X2_mean, self.X2_std = norm_input.get_mean_std(
+        )
+        if self.buffer is not None:
+            self.buffer.normalize(self.X1_mean, self.X1_std, self.X2_mean,
+                                  self.X2_std)
+        self.train.normalize(self.X1_mean, self.X1_std, self.X2_mean,
+                             self.X2_std)
+        if self.val is not None:
+            self.val.normalize(self.X1_mean, self.X1_std, self.X2_mean,
+                               self.X2_std)
+        if self.test is not None:
+            self.test.normalize(self.X1_mean, self.X1_std, self.X2_mean,
+                                self.X2_std)
+
+
+# create dataset class for lorenz96 model
+class lorenzDataset(Dataset):
+    """ A dataset containing windows of data from a Lorenz96 time series. """
+
+    def __init__(
+            self,
+            predict_from="X1X2_window",
+            n_samples=10000,
+            input_steps=2 * DEFAULT_TIME_RESOLUTION,  # 2 days
+            output_delay=1 * DEFAULT_TIME_RESOLUTION,  # 1 day
+            output_steps=1,
+            min_buffer=10,
+            rand_buffer=False,
+            K=36,
+            F=8,
+            c=10,
+            b=10,
+            h=1,
+            coupled=True,
+            time_resolution=DEFAULT_TIME_RESOLUTION,
+            init_buffer_steps=100,
+            return_buffer=True,
             seed=42,
             override=False,
             **kwargs):
@@ -73,11 +194,6 @@ class lorenzDataset(Dataset):
         self.a = None  # adjacency list
         self.predict_from = predict_from
         self.n_samples = int(n_samples)
-        self.input_steps = int(input_steps)
-        self.output_steps = int(output_steps)
-        self.output_delay = int(output_delay)
-        self.min_buffer = int(min_buffer)
-        self.rand_buffer = rand_buffer
         self.K = K
         self.F = F
         self.c = c
@@ -85,7 +201,22 @@ class lorenzDataset(Dataset):
         self.h = h
         self.coupled = coupled
         self.time_resolution = int(time_resolution)
+        self.init_buffer_steps = init_buffer_steps
+        self.return_buffer = return_buffer
         self.seed = seed
+
+        if self.predict_from == "X2":
+            self.input_steps = 1
+            self.output_steps = 1
+            self.output_delay = 0
+            self.min_buffer = 0
+            self.rand_buffer = rand_buffer
+        else:
+            self.input_steps = int(input_steps)
+            self.output_steps = int(output_steps)
+            self.output_delay = int(output_delay)
+            self.min_buffer = int(min_buffer)
+            self.rand_buffer = rand_buffer
 
         if override and os.path.exists(self.path):
             os.remove(self.path)
@@ -96,11 +227,12 @@ class lorenzDataset(Dataset):
     def path(self):
         """ define the file path where data will be stored/extracted. """
         drive_base_path = '/content/drive/My Drive/_research ML AQ/lorenz 96 gnn/lorenz_data'  # obviously this must change depending on your own computer's file system
-        filename = "{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}.npz".format(
+        filename = "{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}.npz".format(
             self.predict_from, self.n_samples, self.input_steps,
             self.output_steps, self.output_delay, self.min_buffer,
             self.rand_buffer, self.K, self.F, self.c, self.b, self.h,
-            self.coupled, self.time_resolution, self.seed)
+            self.coupled, self.time_resolution, self.init_buffer_steps,
+            self.return_buffer, self.seed)
 
         # check if we're in colab or not because the file paths will be different
         if not os.path.exists(drive_base_path):
@@ -164,9 +296,15 @@ class lorenzDataset(Dataset):
             t = data['t']
 
             # convert to Graph structure
-            return [
-                Graph(x=X[i], y=Y[i], t=t[i]) for i in range(self.n_samples)
-            ]
+            if self.init_buffer_steps > 0 and self.return_buffer:
+                return [
+                    Graph(x=X[i], y=Y[i], t=t[i])
+                    for i in range(self.n_samples + self.init_buffer_steps)
+                ]
+            else:
+                return [
+                    Graph(x=X[i], y=Y[i], t=t[i]) for i in range(self.n_samples)
+                ]
 
     def download(self):
         """ generate and store Lorenz data. """
@@ -225,15 +363,18 @@ class lorenzDataset(Dataset):
         n_steps = y_windows[-1][1]
         print('total steps:', n_steps)
         if self.coupled:
-            lorenz_df = lorenzToDF(K=self.K,
-                                   F=self.F,
-                                   c=self.c,
-                                   b=self.b,
-                                   h=self.h,
-                                   coupled=self.coupled,
-                                   n_steps=n_steps,
-                                   time_resolution=self.time_resolution,
-                                   seed=self.seed)
+            lorenz_buffered_df = lorenzToDF(
+                K=self.K,
+                F=self.F,
+                c=self.c,
+                b=self.b,
+                h=self.h,
+                coupled=self.coupled,
+                n_steps=n_steps,
+                time_resolution=self.time_resolution,
+                init_buffer_steps=self.init_buffer_steps,
+                return_buffer=self.return_buffer,
+                seed=self.seed)
         else:
             raise NotImplementedError
 
@@ -250,7 +391,7 @@ class lorenzDataset(Dataset):
             # columns to contain the node feature at every time step
 
             # index and reshape dfs
-            x_df = lorenz_df.iloc[x_window[0]:x_window[1]]
+            x_df = lorenz_buffered_df.iloc[x_window[0]:x_window[1]]
             t_x = x_df.index
             x_df = x_df.T
             x_df = pd.concat([
@@ -260,7 +401,7 @@ class lorenzDataset(Dataset):
                              axis=1)
 
             # for y, we only want to predict the X1 values, not the X2 values
-            y_df = lorenz_df.iloc[y_window[0]:y_window[1], :self.K]
+            y_df = lorenz_buffered_df.iloc[y_window[0]:y_window[1], :self.K]
             t_y = y_df.index
             y_df = y_df.T
 
@@ -276,17 +417,12 @@ class lorenzDataset(Dataset):
             t_X.append(t_x.to_numpy())
             t_Y.append(t_y.to_numpy())
 
-        print('X.shape', len(X))
-        print('Y.shape', len(Y))
-        print('t_X.shape', len(t_X))
-        print('t_Y.shape', len(t_Y))
-        print('X[0].shape', X[0].shape)
         return X, Y, t_X, t_Y
 
     def generate_paired_data(self):
         print('generating paired data')
         if self.coupled:
-            lorenz_df = lorenzToDF(
+            lorenz_buffered_df = lorenzToDF(
                 K=self.K,
                 F=self.F,
                 c=self.c,
@@ -296,29 +432,34 @@ class lorenzDataset(Dataset):
                 n_steps=self.
                 n_samples,  # since 1 sample/window => n_samples total steps
                 time_resolution=self.time_resolution,
+                init_buffer_steps=self.init_buffer_steps,
+                return_buffer=self.return_buffer,
                 seed=self.seed)
 
         else:
             raise NotImplementedError
-        X = lorenz_df.iloc[:, self.K:].to_numpy()  # i.e. the X2 variable
-        Y = lorenz_df.iloc[:, :self.K].to_numpy(
+
+        X = lorenz_buffered_df.iloc[:,
+                                    self.K:].to_numpy()  # i.e. the X2 variable
+        Y = lorenz_buffered_df.iloc[:, :self.K].to_numpy(
         )  # i.e. the X1 variable we want to predict
-        t = lorenz_df.index.to_numpy()
+        t = lorenz_buffered_df.index.to_numpy()
 
         X = X[:, :, np.newaxis]  # reshape to avoid warning from spektral
         Y = Y[:, :, np.newaxis]
 
-        print('X.shape', X.shape)
-        print('Y.shape', Y.shape)
-        print('t.shape', t.shape)
         return X, Y, t
 
     def compute_adjacency_matrix(self):
-        src_nodes = np.concatenate(
-            (np.arange(self.K), np.arange(self.K), np.arange(self.K)))
+        src_nodes = np.concatenate([np.arange(self.K)] * 5)
         target_nodes = np.mod(
-            np.concatenate((np.arange(self.K), (np.arange(self.K) - 1),
-                            (np.arange(self.K) + 1))), self.K)
+            np.concatenate([
+                np.arange(self.K),
+                (np.arange(self.K) - 1),
+                (np.arange(self.K) - 2),
+                (np.arange(self.K) + 1),
+                (np.arange(self.K) + 2),
+            ]), self.K)
         weights = np.ones(shape=len(src_nodes))
         return coo_matrix((weights, (src_nodes, target_nodes)),
                           shape=(self.K, self.K))
@@ -337,35 +478,50 @@ class lorenzDataset(Dataset):
         all_y = np.concatenate([g.y for g in self])
         finish_concat = datetime.now()
 
-        X1_mean = np.concatenate([all_x[:, :self.input_steps], all_y],
-                                 axis=1).mean()
-        X1_std = np.concatenate([all_x[:, :self.input_steps], all_y],
-                                axis=1).std()
-        finish_X1 = datetime.now()
+        # TODO: verify if we actually want the X1 mean to be affected by output (X1 prediction) values?
+        # (i guess when its X2_single mode, we still have to normalize the output data according to the training output.. hm ok)
+        if self.predict_from == "X1X2_window":
+            all_X1 = np.concatenate([all_x[:, :self.input_steps], all_y],
+                                    axis=1)
+            all_X2 = all_x[:, self.input_steps:]
+        elif self.predict_from == "X2":
+            all_X1 = all_y
+            all_X2 = all_x
+        else:
+            raise NotImplementedError
 
-        X2_mean = all_x[:, self.input_steps:].mean()
-        X2_std = all_x[:, self.input_steps:].std()
-        finish_X2 = datetime.now()
+        X1_mean = all_X1.mean()
+        X1_std = all_X1.std()
+
+        X2_mean = all_X2.mean()
+        X2_std = all_X2.std()
+        finish_extract = datetime.now()
 
         print('time to concat:', finish_concat - start)
-        print('time to get std&mean from X1:', finish_X1 - finish_concat)
-        print('time to get std&mean from X2:', finish_X2 - finish_X1)
+        print('time to get std&mean:', finish_extract - finish_concat)
 
         return X1_mean, X1_std, X2_mean, X2_std
 
     def normalize(self, X1_mean, X1_std, X2_mean, X2_std):
-        for g in self:
-            # separate X1 and X2 in g.x. recall that g.x has shape
-            # (K, 2 * input_steps)
-            X1 = g.x[:, :self.input_steps]
-            X2 = g.x[:, self.input_steps:]
+        if self.predict_from == "X1X2_window":
+            for g in self:
+                # separate X1 and X2 in g.x. recall that g.x has shape
+                # (K, 2 * input_steps)
+                X1 = g.x[:, :self.input_steps]
+                X2 = g.x[:, self.input_steps:]
 
-            X1_norm = (X1 - X1_mean) / X1_std
-            X2_norm = (X2 - X2_mean) / X2_std
+                X1_norm = (X1 - X1_mean) / X1_std
+                X2_norm = (X2 - X2_mean) / X2_std
 
-            g.x = np.concatenate([X1_norm, X2_norm], axis=1)
-            g.y = (g.y - X1_mean) / X1_std
-            # (the target only contains the X1 variable)
+                g.x = np.concatenate([X1_norm, X2_norm], axis=1)
+                g.y = (g.y - X1_mean) / X1_std
+                # (the target only contains the X1 variable)
+        elif self.predict_from == "X2":
+            for g in self:
+                g.x = (g.x - X2_mean) / X2_std
+                g.y = (g.y - X1_mean) / X1_std
+        else:
+            raise NotImplementedError
 
     def plot(self,
              node=0,
@@ -441,6 +597,8 @@ def lorenzToDF(
         n_steps=None,  # 30 * 100,
         n_days=30,
         time_resolution=100,
+        init_buffer_steps=100,
+        return_buffer=True,
         seed=42):
     """ generate a dataframe of data from the lorenz model. 
 
@@ -461,7 +619,7 @@ def lorenzToDF(
     if n_steps is None:
         n_steps = n_days * time_resolution
     if coupled:
-        t_raw, X_raw, _, _, _ = run_Lorenz96_2coupled(
+        t_buffered_raw, X_buffered_raw, _, _, _ = run_Lorenz96_2coupled(
             K=K,
             F=F,
             c=c,
@@ -469,14 +627,16 @@ def lorenzToDF(
             h=h,
             n_steps=n_steps,
             resolution=time_resolution,
+            init_buffer_steps=init_buffer_steps,
+            return_buffer=return_buffer,
             seed=seed)
     else:
         raise NotImplementedError
 
-    df = pd.DataFrame(X_raw,
+    df = pd.DataFrame(X_buffered_raw,
                       columns=['X1_{}'.format(i) for i in range(K)] +
                       ['X2_{}'.format(i) for i in range(K)],
-                      index=t_raw)
+                      index=t_buffered_raw)
     df.index.name = 'day'
     return df
 
@@ -521,7 +681,7 @@ def run_Lorenz96(K=36, F=8, number_of_days=30, nudge=True):
     X = odeint(lorenz96, X0, t, args=(K, F),
                ixpr=True)  #solves the system of ordinary differential equations
 
-    return t, X, F, K, number_of_days  #gives us the output
+    return t, X, F, K, number_of_days
 
 
 ##################################
@@ -584,7 +744,9 @@ def run_Lorenz96_2coupled(
         h=1,
         n_steps=300,
         resolution=DEFAULT_TIME_RESOLUTION,  # 100
-        number_of_days=None,
+        n_days=None,
+        init_buffer_steps=100,
+        return_buffer=True,
         seed=42):
     """ (modified from Prof. Kavassalis) 
     
@@ -600,15 +762,20 @@ def run_Lorenz96_2coupled(
     X0[random.randint(0, K) -
        1] = X0[random.randint(0, K) - 1] + random.uniform(0, .01)
 
-    if number_of_days is None:
-        number_of_days = n_steps / resolution
-    t = np.arange(0.0, number_of_days, 1 / resolution)
-
-    print('integrating for {} days at {} resolution (i.e. {} pts)'.format(
-        number_of_days, resolution, len(t)))
-    print('len t vs n_steps', len(t), n_steps, len(t) == n_steps)
+    if n_days is None:
+        n_days = n_steps / resolution
+    buffer_days = init_buffer_steps / resolution
+    t_buffered = np.arange(0.0, buffer_days + n_days, 1 / resolution)
 
     print('starting integration')
-    X = odeint(lorenz96_2coupled, X0, t, args=(K, F, c, b, h), ixpr=True)
+    X = odeint(lorenz96_2coupled,
+               X0,
+               t_buffered,
+               args=(K, F, c, b, h),
+               ixpr=True)
 
-    return t, X, F, K, number_of_days
+    if return_buffer:
+        return t_buffered, X, F, K, n_days
+    else:
+        return t_buffered[init_buffer_steps:], X[
+            init_buffer_steps:], F, K, n_days

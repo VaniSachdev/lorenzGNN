@@ -37,6 +37,8 @@ def train_model(train,
     """ Args:
             model: tensorflow model (not yet compiled)
     """
+    print('in train_model')
+
     # type checks
     assert isinstance(optimizer, str) or isinstance(optimizer(), Optimizer)
     assert isinstance(loss, str) or isinstance(loss(), Loss)
@@ -48,6 +50,8 @@ def train_model(train,
         val_loader = MixedLoader(dataset=val, batch_size=32, shuffle=False)
 
     # compile model
+    print('compile model')
+
     model.compile(optimizer=optimizer(learning_rate), loss=loss)
 
     # set up callbacks, logging, etc
@@ -70,6 +74,8 @@ def train_model(train,
         tensorboard_callback = TensorBoard(log_dir=log_dir, histogram_freq=1)
         callbacks.append(tensorboard_callback)
 
+    print('fit model')
+
     if eval_val:
         history = model.fit(train_loader.load(),
                             steps_per_epoch=train_loader.steps_per_epoch,
@@ -89,6 +95,7 @@ def train_model(train,
                             verbose=verbose)
 
     if save_model:
+        print('saving model')
         # save the model
         fpath = os.path.join('saved_models', fname)
         model.save(fpath,
@@ -132,7 +139,7 @@ def train_model(train,
 
 def make_train_GCN3(train,
                     val=None,
-                    channels_0=2048,
+                    channels_0=128,
                     channels_1=32,
                     activation="relu",
                     use_bias=False,
@@ -148,6 +155,7 @@ def make_train_GCN3(train,
                     early_stopping_start_from_epoch=3,
                     eval_val=True,
                     tensorboard=False):
+    print('in make_train_GCN3')
     # create and train model
     GCN_model = GCN3(
         n_labels=1,
@@ -194,6 +202,7 @@ def make_train_GCN(train,
                    early_stopping_start_from_epoch=3,
                    eval_val=True,
                    tensorboard=False):
+    """ Returns: GCN_model, history, fname """
     # create and train model
     GCN_model = GCN(
         n_labels=1,
@@ -227,20 +236,20 @@ def plot_model_results(train,
                        model,
                        history=None,
                        fname=None,
-                       epochs=DEFAULT_EPOCHS,
+                       nodes=[0, 10, 20],
                        ylim=None,
                        save=True):
     # plot training MSE (if model needed training)
     if history is not None:
         fig_train_loss, ax = plt.subplots(1, 1, figsize=(4, 3))
         ax.plot(history.history['loss'], label='loss')
-        ax.text(x=epochs,
-                y=ax.get_ylim()[1],
+        ax.text(x=0.6 * ax.get_xlim()[1],
+                y=0.7 * ax.get_ylim()[1],
                 s="final train loss: {:.2f}".format(
                     history.history['loss'][-1]))
         if 'val_loss' in history.history:
             ax.plot(history.history['val_loss'], label='validation loss')
-            ax.text(x=epochs,
+            ax.text(x=0.6 * ax.get_xlim()[1],
                     y=0.5 * ax.get_ylim()[1],
                     s="final val loss: {:.2f}".format(
                         history.history['val_loss'][-1]))
@@ -254,22 +263,24 @@ def plot_model_results(train,
         fig_train_loss = None
 
     # plot train predictions
-    fig_train_pred = plot_with_predictions(
-        model=model,
-        graph_dataset=train,
-        Loader=MixedLoader,
-        batch_size=32,
-        #    node=0,
-        model_name=model.name + ' (train)')
+    fig_train_pred = plot_with_predictions(model=model,
+                                           graph_dataset=train,
+                                           Loader=MixedLoader,
+                                           batch_size=32,
+                                           nodes=nodes,
+                                           model_name=model.name + ' (train)')
 
     # plot val predictions
-    fig_val_pred = plot_with_predictions(
-        model=model,
-        graph_dataset=val,
-        Loader=MixedLoader,
-        batch_size=32,
-        #  node=0,
-        model_name=model.name + ' (val)')
+    if val is None:
+        print('no val data to plot')
+        fig_val_pred = None
+    else:
+        fig_val_pred = plot_with_predictions(model=model,
+                                             graph_dataset=val,
+                                             Loader=MixedLoader,
+                                             batch_size=32,
+                                             nodes=nodes,
+                                             model_name=model.name + ' (val)')
 
     # save outputs
     if save:
@@ -282,7 +293,8 @@ def plot_model_results(train,
 
             fig_train_loss.savefig(os.path.join(fdir, 'fig_train_loss'))
             fig_train_pred.savefig(os.path.join(fdir, 'fig_train_pred'))
-            fig_val_pred.savefig(os.path.join(fdir, 'fig_val_pred'))
+            if val is not None:
+                fig_val_pred.savefig(os.path.join(fdir, 'fig_val_pred'))
 
     return fig_train_loss, fig_train_pred, fig_val_pred
 
