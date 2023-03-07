@@ -17,6 +17,7 @@ from spektral.data.dataset import Dataset
 from spektral.datasets.utils import DATASET_FOLDER
 
 from datetime import datetime
+import logging
 
 DEFAULT_TIME_RESOLUTION = 100
 
@@ -101,7 +102,6 @@ class lorenzDatasetWrapper():
                                     return_buffer=self.return_buffer,
                                     seed=self.seed,
                                     override=override)
-        print('dataset_raw', dataset_raw)
         # split dataset
         if init_buffer_steps > 0 and return_buffer:
             self.buffer = dataset_raw[:init_buffer_steps]
@@ -117,13 +117,16 @@ class lorenzDatasetWrapper():
         self.val = None if train_pct == 1 else dataset[train_bound:val_bound]
         self.test = None if train_pct + val_pct == 1 else dataset[val_bound:]
 
-        # normalize dataset (replaced existing train, val, test with normalized versions)
-        self.normalize()
-
     def normalize(self):
+        """ normalize dataset using training data distribution, and buffer data 
+            distribution if available. 
+
+            (replaced existing train, val, test with normalized versions)
+        """
         norm_input = self.train if self.buffer is None else self.buffer + self.train
         # including the buffer data helps to stabilize the mean and std when the train data is very small
         # but theoretically should drop once we use larger datasets because the buffer is throwaway data (to give the Lorenz model time to settle)
+        # TODO: add flag to keep/drop buffer data in normalization
 
         self.X1_mean, self.X1_std, self.X2_mean, self.X2_std = norm_input.get_mean_std(
         )
@@ -238,13 +241,13 @@ class lorenzDataset(Dataset):
         if not os.path.exists(drive_base_path):
             # either running locally or on colab without designated folder/matching file system structure
             if os.getcwd().startswith('/content/drive'):  # running on colab
-                print(
+                logging.info(
                     'using default root path to directory for storing generated lorenz datasets'
                 )
             subpath = os.path.join('Lorenz', filename)
             path = os.path.join(DATASET_FOLDER, subpath)
         else:  # running on colab with custom directory for storing datasets
-            print('storing generated datasets in designated folder')
+            logging.info('storing generated datasets in designated folder')
             path = os.path.join(drive_base_path, filename)
         return path
 
@@ -270,7 +273,7 @@ class lorenzDataset(Dataset):
 
             assumes that the dataset file path already exists. (this is handled in super().__init__)
         """
-        print('reading Lorenz data from stored file')
+        logging.info('reading Lorenz data from stored file')
         # create adjacency list
         self.a = self.compute_adjacency_matrix()
 
@@ -313,7 +316,7 @@ class lorenzDataset(Dataset):
             os.makedirs(os.path.dirname(self.path))
         filename = os.path.splitext(self.path)[0]
 
-        print('generating new Lorenz data and saving to file')
+        logging.info('generating new Lorenz data and saving to file')
         # generate a sequence of windows to determine how our samples will be
         # spaced out
         # x_windows is a list of <n_samples> tuples; each element is a tuple
@@ -337,7 +340,7 @@ class lorenzDataset(Dataset):
             raise ValueError('invalid input for prediction_from argument')
 
     def generate_window_data(self):
-        print('generating window data')
+        logging.info('generating window data')
         if self.rand_buffer:
             # TODO: maybe use an exponential distribution to determine buffer space
             raise NotImplementedError
@@ -361,7 +364,7 @@ class lorenzDataset(Dataset):
 
         # generate some data
         n_steps = y_windows[-1][1]
-        print('total steps:', n_steps)
+        logging.debug('total steps: {}'.format(n_steps))
         if self.coupled:
             lorenz_buffered_df = lorenzToDF(
                 K=self.K,
@@ -420,7 +423,7 @@ class lorenzDataset(Dataset):
         return X, Y, t_X, t_Y
 
     def generate_paired_data(self):
-        print('generating paired data')
+        logging.info('generating paired data')
         if self.coupled:
             lorenz_buffered_df = lorenzToDF(
                 K=self.K,
@@ -497,8 +500,9 @@ class lorenzDataset(Dataset):
         X2_std = all_X2.std()
         finish_extract = datetime.now()
 
-        print('time to concat:', finish_concat - start)
-        print('time to get std&mean:', finish_extract - finish_concat)
+        logging.debug('time to concat: {}'.format(finish_concat - start))
+        logging.debug('time to get std&mean: {}'.format(finish_extract -
+                                                        finish_concat))
 
         return X1_mean, X1_std, X2_mean, X2_std
 
@@ -677,7 +681,7 @@ def run_Lorenz96(K=36, F=8, number_of_days=30, nudge=True):
     t = np.arange(0.0, number_of_days,
                   0.01)  # creates the time points we want to see solutiosn for
 
-    print('starting integration')
+    logging.info('starting integration')
     X = odeint(lorenz96, X0, t, args=(K, F),
                ixpr=True)  #solves the system of ordinary differential equations
 
@@ -767,7 +771,7 @@ def run_Lorenz96_2coupled(
     buffer_days = init_buffer_steps / resolution
     t_buffered = np.arange(0.0, buffer_days + n_days, 1 / resolution)
 
-    print('starting integration')
+    logging.info('starting integration')
     X = odeint(lorenz96_2coupled,
                X0,
                t_buffered,
