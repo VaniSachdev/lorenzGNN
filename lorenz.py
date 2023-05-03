@@ -15,6 +15,7 @@ from scipy.sparse import coo_matrix
 from spektral.data import Graph
 from spektral.data.dataset import Dataset
 from spektral.datasets.utils import DATASET_FOLDER
+from spektral.utils import gcn_filter
 
 from datetime import datetime
 import logging
@@ -29,6 +30,8 @@ class lorenzDatasetWrapper():
             self,
             predict_from="X1X2_window",
             n_samples=10000,
+            preprocessing=True,
+            simple_adj=False,
             input_steps=2 * DEFAULT_TIME_RESOLUTION,  # 2 days
             output_delay=1 * DEFAULT_TIME_RESOLUTION,  # 1 day
             output_steps=1,
@@ -55,6 +58,7 @@ class lorenzDatasetWrapper():
         # set up variables
         self.predict_from = predict_from
         self.n_samples = int(n_samples)
+        self.preprocessing = preprocessing
         self.K = K
         self.F = F
         self.c = c
@@ -86,6 +90,8 @@ class lorenzDatasetWrapper():
         # generate dataset
         dataset_raw = lorenzDataset(predict_from=self.predict_from,
                                     n_samples=self.n_samples,
+                                    preprocessing=self.preprocessing,
+                                    simple_adj=simple_adj,
                                     input_steps=self.input_steps,
                                     output_delay=self.output_delay,
                                     output_steps=self.output_steps,
@@ -151,6 +157,8 @@ class lorenzDataset(Dataset):
             self,
             predict_from="X1X2_window",
             n_samples=10000,
+            preprocessing=True,
+            simple_adj=False,
             input_steps=2 * DEFAULT_TIME_RESOLUTION,  # 2 days
             output_delay=1 * DEFAULT_TIME_RESOLUTION,  # 1 day
             output_steps=1,
@@ -174,6 +182,9 @@ class lorenzDataset(Dataset):
                 n_samples (int): sets of data samples to generate. (each sample 
                     contains <input_steps> steps of input data + <output_steps> 
                     steps of output data)
+                preprocess (bool): whether or not to apply the gcn_filter 
+                    preprocessing step to add self-loops and normalize the 
+                    adjacency matrix. if False, the adjacency matrix will contain self-loops but won't be normalized. 
                 input_steps (int): num of timesteps in each input window (only used if predict_from uses a window)
                 output_steps (int): num of timesteps in each output window (only used if predict_from uses a window)
                 output_delay (int): number of time_steps between end of input 
@@ -194,7 +205,8 @@ class lorenzDataset(Dataset):
                 override (bool): whether or not to regenerate data that was 
                     already generated previously
         """
-        self.a = None  # adjacency list
+        self.preprocessing = preprocessing
+        self.simple_adj = simple_adj
         self.predict_from = predict_from
         self.n_samples = int(n_samples)
         self.K = K
@@ -207,6 +219,7 @@ class lorenzDataset(Dataset):
         self.init_buffer_steps = init_buffer_steps
         self.return_buffer = return_buffer
         self.seed = seed
+        self.a = None  # self.a is set to None anyway in super __init__ so we have to define it in the read() function
 
         if self.predict_from == "X2":
             self.input_steps = 1
@@ -224,6 +237,7 @@ class lorenzDataset(Dataset):
         if override and os.path.exists(self.path):
             os.remove(self.path)
 
+        # super().__init__(transforms=self.transforms,**kwargs)
         super().__init__(**kwargs)
 
     @property
@@ -274,8 +288,10 @@ class lorenzDataset(Dataset):
             assumes that the dataset file path already exists. (this is handled in super().__init__)
         """
         logging.info('reading Lorenz data from stored file')
-        # create adjacency list
+
+        # create sparse adjacency matrix
         self.a = self.compute_adjacency_matrix()
+        print('done computing adj')
 
         # read data from computer
         data = np.load(self.path, allow_pickle=True)
@@ -454,18 +470,29 @@ class lorenzDataset(Dataset):
         return X, Y, t
 
     def compute_adjacency_matrix(self):
-        src_nodes = np.concatenate([np.arange(self.K)] * 5)
-        target_nodes = np.mod(
-            np.concatenate([
-                np.arange(self.K),
-                (np.arange(self.K) - 1),
-                (np.arange(self.K) - 2),
-                (np.arange(self.K) + 1),
-                (np.arange(self.K) + 2),
-            ]), self.K)
+        if self.simple_adj:
+            target_nodes = np.mod(np.arange(self.K) + 1, self.K)
+            src_nodes = np.arange(self.K)
+        else:
+            target_nodes = np.mod(
+                np.concatenate([
+                    (np.arange(self.K) - 1),
+                    (np.arange(self.K) - 2),
+                    (np.arange(self.K) + 1),
+                    (np.arange(self.K) + 2),
+                ]), self.K)
+            if not self.preprocessing:
+                # if we aren't using the preprocessing transform that adds the identity matrix, we need to add self-loops outselves here
+                target_nodes = np.concatenate([target_nodes, np.arange(self.K)])
+                src_nodes = np.concatenate([np.arange(self.K)] * 5)
+            else:
+                src_nodes = np.concatenate([np.arange(self.K)] * 4)
         weights = np.ones(shape=len(src_nodes))
-        return coo_matrix((weights, (src_nodes, target_nodes)),
-                          shape=(self.K, self.K))
+        a = coo_matrix((weights, (src_nodes, target_nodes)),
+                       shape=(self.K, self.K))
+        if self.preprocessing:
+            a = gcn_filter(a)
+        return a
 
     def get_mean_std(self):
         """ Calculates the mean and stdev for 1) all X1 variables (includes both feature 
@@ -556,16 +583,18 @@ class lorenzDataset(Dataset):
 
         if self.predict_from == "X1X2_window":
             for g in self:
-                ax0.plot(g.t_X,
-                         g.x[node][:self.input_steps],
-                         label=data_type + ' inputs',
-                         c=color,
-                         alpha=alpha)
-                ax1.plot(g.t_X,
-                         g.x[node][self.input_steps:],
-                         label=data_type + ' inputs',
-                         c=color,
-                         alpha=alpha)
+                # plot X1
+                ax0.scatter(g.t_X,
+                            g.x[node][:self.input_steps],
+                            label=data_type + ' inputs',
+                            c=color,
+                            alpha=alpha)
+                # plot X2
+                ax1.scatter(g.t_X,
+                            g.x[node][self.input_steps:],
+                            label=data_type + ' inputs',
+                            c=color,
+                            alpha=alpha)
                 ax0.scatter(g.t_Y,
                             g.y[node][:self.output_steps],
                             label=data_type + ' labels',
