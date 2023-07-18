@@ -7,3 +7,4 @@ spektral==1.2.0
 tensorflow==2.11.0
 graph_nets==1.1.0
 networkx==3.0
+pyyaml==6.0

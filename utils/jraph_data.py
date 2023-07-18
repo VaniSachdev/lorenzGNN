@@ -16,6 +16,14 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
 
 
 def lorenz_graph_tuple_list(n_samples=2_000):
+    """ Generated data using Lorenz96 and splits data into train and val. 
+
+        Args: 
+            n_samples (int): number of data points to generate data for. 
+
+        Output:
+            returns a dict with two keys, "train" and "val", each corresponding to a list of jraph.GraphsTuple objects. 
+    """
     # i'm just going to pull the data out of a lorenz spektral dataset
     # this is computationally inefficient but convenient code-wise so I don't
     # have to rewrite all the normalization functions and stuff
@@ -46,28 +54,25 @@ def lorenz_graph_tuple_list(n_samples=2_000):
         override=False)
     dataset.normalize()
 
-    # iter over time steps in lorenz data
-
     graph_tuple_lists = {'train': [], 'val': []}
-    # construct a new data dict for each time step
+
     for g in dataset.train:
         # g.x has shape 36 x 2
         graph_tuple = timestep_to_graphstuple(g.x, K=K)
         graph_tuple_lists['train'].append(graph_tuple)
+
     for g in dataset.val:
         # g.x has shape 36 x 2
         graph_tuple = timestep_to_graphstuple(g.x, K=K)
         graph_tuple_lists['val'].append(graph_tuple)
 
-    # convert all data dicts into a single GraphTuple
-    # graph_tuple = utils_np.data_dicts_to_graphs_tuple(data_dict_list)
-
-    # return graph_tuple
     return graph_tuple_lists
 
 
 def timestep_to_graphstuple(data, K):
-    """ Args:
+    """ Converts an array of data corresponding to 
+    
+    Args:
             data: array of shape (K, num_fts)
             K (int): number of nodes in the Lorenz system
             ft_type (str): either "global" or "nodes", i.e. whether the 
