@@ -82,6 +82,7 @@ def rollout(
 def train(net_fn, dataset: List[Dict[str, Any]],
           num_train_steps: int) -> hk.Params:
     """Training loop."""
+    # TODO: change num_train_steps to epochs
 
     # Transform impure `net_fn` to pure functions with hk.transform.
     net = hk.without_apply_rng(hk.transform(net_fn))
@@ -124,6 +125,7 @@ def train(net_fn, dataset: List[Dict[str, Any]],
         (loss, pred), grad = compute_loss_fn(params,
                                              input_graph=graph,
                                              target_graph=target)
+        # TODO: ADD VAL PREDS AND LOSSES 
         updates, opt_state = opt_update(grad, opt_state, params)
         params = optax.apply_updates(params, updates)
         if idx % 50 == 0:

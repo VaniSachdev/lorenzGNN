@@ -22,18 +22,32 @@ DATA:
     TRAIN_PCT: 0.7
     VAL_PCT: 0.2
     TEST_PCT: 0.1
+  N_ROLLOUT_STEPS: 2
+  TIMESTEP_DURATION: 25
   SEED: 42
+  OVERRIDE: False
 
+MODEL:
+  ARCH: MLP 
+  # ARCH options: naive_zero, naive_constant, MLP
+  SPATIAL: True 
+
+OUTPUT_DIR: "outputs/"
 TRAIN:
   ENABLE: True
   RESUME_FROM_CHECKPOINT: False
-  CHECKPOINT: ""
-  MAX_EPOCHS: 100
+  # CHECKPOINT_FNAME: ""
+  # if resume_from_checkpoint true and no explicit checkpoint, resume from the latest epoch
+  MAX_EPOCHS: 2
+  LOAD_PARAMS: False
+  PARAM_PATH: ""
 
 VAL:
   ENABLE: True
-  CHECKPOINT: "INSERT"
+  # if checkpoint not explicitly passed, use latest output from train (i.e. latest epoch)
+  # CHECKPOINT_FNAME: "INSERT"
   
 TEST:
   ENABLE: True
-  CHECKPOINT: "INSERT"
+  # CHECKPOINT_FNAME: "INSERT"
+  # if checkpoint not explicitly passed, use latest output from train (i.e. latest epoch)

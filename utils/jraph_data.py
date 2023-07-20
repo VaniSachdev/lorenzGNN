@@ -15,7 +15,27 @@ import optax
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
 
 
-def lorenz_graph_tuple_list(n_samples=2_000):
+def lorenz_graph_tuple_list(
+        predict_from="X1X2_window", 
+        n_samples=2_000, 
+        input_steps=1,
+        output_delay=0,
+        output_steps=0,
+        min_buffer=0,
+        K=36,
+        F=8,
+        c=10,
+        b=10,
+        h=1,
+        coupled=True,
+        time_resolution=100, 
+        seed=42,
+        init_buffer_steps=100,
+        return_buffer=False,
+        train_pct=0.7,
+        val_pct=0.2,
+        test_pct=0.1,
+        override=False):
     """ Generated data using Lorenz96 and splits data into train and val. 
 
         Args: 
@@ -27,31 +47,28 @@ def lorenz_graph_tuple_list(n_samples=2_000):
     # i'm just going to pull the data out of a lorenz spektral dataset
     # this is computationally inefficient but convenient code-wise so I don't
     # have to rewrite all the normalization functions and stuff
-
-    # only uncomment each line if testing a non-default parameter
-    K = 36
     dataset = lorenzDatasetWrapper(
-        predict_from="X1X2_window",
+        predict_from=predict_from,
         n_samples=n_samples,
-        input_steps=1,
-        output_delay=0,
-        output_steps=0,
-        min_buffer=0,
-        # rand_buffer=False,
+        input_steps=input_steps,
+        output_delay=output_delay,
+        output_steps=output_steps,
+        min_buffer=min_buffer,
+        rand_buffer=False,
         K=K,
-        # F=8,
-        # c=10,
-        # b=10,
-        # h=1,
-        # coupled=True,
-        # time_resolution=DEFAULT_TIME_RESOLUTION, #(100)
-        # seed=42,
-        init_buffer_steps=100,
-        return_buffer=False,
-        train_pct=0.7,
-        val_pct=0.3,
-        test_pct=0,
-        override=False)
+        F=F,
+        c=c,
+        b=b,
+        h=h,
+        coupled=coupled,
+        time_resolution=time_resolution, 
+        seed=seed,
+        init_buffer_steps=init_buffer_steps,
+        return_buffer=return_buffer,
+        train_pct=train_pct,
+        val_pct=val_pct,
+        test_pct=test_pct,
+        override=override)
     dataset.normalize()
 
     graph_tuple_lists = {'train': [], 'val': []}
