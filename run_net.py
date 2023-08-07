@@ -1,82 +1,69 @@
-# from utils.plotters import plot_data
-from utils.jraph_data import lorenz_graph_tuple_list, print_graph_fts, get_data_windows, data_list_to_dict
-# from utils.jraph_vis import draw_jraph_graph_structure, plot_time_series_for_node, plot_rollout_for_node, plot_predictions
+from utils.jraph_data import lorenz_graph_tuple_list, data_list_to_dict
 from utils.jraph_models import MLPBlock_fn, MLPGraphNetwork_fn, naive_const_fn, naive_zero_fn
 from utils.jraph_training import train, evaluate
-
-# import jraph
-# import jax
-# import jax.numpy as jnp
-# import networkx as nx
-# import haiku as hk
-# for training sequence
-# import functools
-# import optax
-# from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
-
-# import numpy as np
-# import matplotlib.pyplot as plt
 
 import os
 import yaml
 from datetime import datetime
 import logging
-
-logging.basicConfig(level=logging.INFO)
-# TODO: add logging to file
-# TODO: check AUTOFORMATTER
+import pdb
 
 CFG_PATH = "configs/default_cfg.yaml"
 
 
 def get_dataset(cfg):
     graph_tuple_lists = lorenz_graph_tuple_list(
-        predict_from=cfg["PREDICTION_PARADIGM"], 
-        n_samples=cfg["N_SAMPLES"], 
-        input_steps=cfg["INPUT_STEPS"],
-        output_delay=cfg["OUTPUT_DELAY"],
-        output_steps=cfg["OUTPUT_STEPS"],
-        min_buffer=cfg["MIN_BUFFER"],
-        K=cfg["LORENZ"]["K"],
-        F=cfg["LORENZ"]["F"],
-        c=cfg["LORENZ"]["C"],
-        b=cfg["LORENZ"]["B"],
-        h=cfg["LORENZ"]["H"],
-        coupled=cfg["LORENZ"]["COUPLED"],
-        time_resolution=cfg["TIME_RESOLUTION"], 
-        seed=cfg["SEED"],
-        init_buffer_steps=cfg["BUFFER"]["INIT_BUFFER_STEPS"],
-        return_buffer=cfg["BUFFER"]["RETURN_BUFFER"],
-        train_pct=cfg["SPLIT"]["TRAIN_PCT"],
-        val_pct=cfg["SPLIT"]["VAL_PCT"],
-        test_pct=cfg["SPLIT"]["TEST_PCT"],
-        override=cfg["OVERRIDE"]
-    )
+        predict_from=cfg["DATA"]["PREDICTION_PARADIGM"],
+        n_samples=cfg["DATA"]["N_SAMPLES"],
+        input_steps=cfg["DATA"]["INPUT_STEPS"],
+        output_delay=cfg["DATA"]["OUTPUT_DELAY"],
+        output_steps=cfg["DATA"]["OUTPUT_STEPS"],
+        min_buffer=cfg["DATA"]["MIN_BUFFER"],
+        K=cfg["DATA"]["LORENZ"]["K"],
+        F=cfg["DATA"]["LORENZ"]["F"],
+        c=cfg["DATA"]["LORENZ"]["C"],
+        b=cfg["DATA"]["LORENZ"]["B"],
+        h=cfg["DATA"]["LORENZ"]["H"],
+        coupled=cfg["DATA"]["LORENZ"]["COUPLED"],
+        time_resolution=cfg["DATA"]["TIME_RESOLUTION"],
+        seed=cfg["DATA"]["SEED"],
+        init_buffer_steps=cfg["DATA"]["BUFFER"]["INIT_BUFFER_STEPS"],
+        return_buffer=cfg["DATA"]["BUFFER"]["RETURN_BUFFER"],
+        train_pct=cfg["DATA"]["SPLIT"]["TRAIN_PCT"],
+        val_pct=cfg["DATA"]["SPLIT"]["VAL_PCT"],
+        test_pct=cfg["DATA"]["SPLIT"]["TEST_PCT"],
+        override=cfg["DATA"]["OVERRIDE"])
 
-    n_rollout_steps = cfg["N_ROLLOUT_STEPS"]
-    timestep_duration = cfg["TIMESTEP_DURATION"]
+    n_rollout_steps = cfg["DATA"]["N_ROLLOUT_STEPS"]
+    timestep_duration = cfg["DATA"]["TIMESTEP_DURATION"]
     data_dict_lists = {
-        'train': data_list_to_dict(graph_tuple_lists['train'],
-                        n_rollout_steps=n_rollout_steps,
-                        timestep_duration=timestep_duration),
-        'val': data_list_to_dict(graph_tuple_lists['val'],
-                        n_rollout_steps=n_rollout_steps,
-                        timestep_duration=timestep_duration),
-        'test': data_list_to_dict(graph_tuple_lists['test'],
-                        n_rollout_steps=n_rollout_steps,
-                        timestep_duration=timestep_duration)
+        'train':
+        data_list_to_dict(graph_tuple_lists['train'],
+                          n_rollout_steps=n_rollout_steps,
+                          timestep_duration=timestep_duration),
+        'val':
+        data_list_to_dict(graph_tuple_lists['val'],
+                          n_rollout_steps=n_rollout_steps,
+                          timestep_duration=timestep_duration),
+        'test':
+        data_list_to_dict(graph_tuple_lists['test'],
+                          n_rollout_steps=n_rollout_steps,
+                          timestep_duration=timestep_duration)
     }
 
     return data_dict_lists
 
+
 def get_model_fn(cfg):
     model_arch = cfg["MODEL"]["ARCH"]
 
-    model_fns = {"naive_zero": naive_zero_fn, 
-                 "naive_const": naive_const_fn, 
-                 "MLP_block": MLPBlock_fn, 
-                 "MLP_graph_network": MLPGraphNetwork_fn}
-    
+    model_fns = {
+        "naive_zero": naive_zero_fn,
+        "naive_const": naive_const_fn,
+        "MLP_block": MLPBlock_fn,
+        "MLP_graph_network": MLPGraphNetwork_fn
+    }
+
     assert model_arch in model_fns.keys()
     return model_fns[model_arch]
 
@@ -88,48 +75,77 @@ def run(cfg):
     model_fn = get_model_fn(cfg)
 
     # run training pipeline
-    assert cfg["TRAIN"]["ENABLE"] or (cfg["TRAIN"]["LOAD_PARAMS"] 
+    assert cfg["TRAIN"]["ENABLE"] or (cfg["TRAIN"]["LOAD_PARAMS"]
                                       and cfg["TRAIN"]["PARAM_PATH"] != "")
     if cfg["TRAIN"]["ENABLE"]:
         logging.info("running training pipeline")
         start = datetime.now()
         epochs = cfg["TRAIN"]["MAX_EPOCHS"]
-        params = train(model_fn, 
-                               data_dict_lists["train"], 
-                               epochs=epochs)
+        params = train(model_fn,
+                       data_dict_lists=data_dict_lists,
+                       epochs=epochs,
+                       cfg=cfg)
         logging.info(f"training complete: runtime of {datetime.now() - start}")
-    else: 
-        # load existing parameters 
+    else:
+        # load existing parameters
         raise NotImplementedError
 
     # run validation pipeline
     if cfg["VAL"]["ENABLE"]:
         logging.info("running validation pipeline")
         start = datetime.now()
-        val_loss, val_preds = evaluate(model_fn, 
-                                       data_dict_lists['val'],
-                                       params)
-        logging.info(f"validation complete: runtime of {datetime.now() - start}")
+        val_loss, val_preds = evaluate(model_fn, data_dict_lists['val'], params)
+        logging.info(
+            f"validation complete: runtime of {datetime.now() - start}")
 
     # run testing pipeline
     if cfg["TEST"]["ENABLE"]:
         logging.info("running testing pipeline")
         start = datetime.now()
-        test_loss, test_preds = evaluate(model_fn, 
-                                       data_dict_lists['test'],
-                                       params)
-        print(test_loss)
-        print(type(test_loss))
-        print(test_preds)
-        print(type(test_preds))
+        test_loss, test_preds = evaluate(model_fn, data_dict_lists['test'],
+                                         params)
         logging.info(f"testing complete: runtime of {datetime.now() - start}")
 
     logging.info("run complete")
-    
+
+
+def set_up_logging(cfg):
+    log_dir = os.path.join(cfg["OUTPUT_DIR"], "logs")
+    log_path = os.path.join(
+        log_dir, f"stdout_{datetime.now().strftime('%y-%m-%d_%H:%M:%S')}.log")
+
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
+    log_level = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL
+    }[cfg["LOG_LEVEL"]]
+    # TODO: check it it creates the directory if it doesn't exist
+
+    logging.basicConfig(filename=log_path, encoding='utf-8', level=log_level)
+
+
+def main(cfg_path):
+    # load config
+    with open(cfg_path, "r") as f:
+        cfg = yaml.load(f, Loader=yaml.FullLoader)  # dict object
+
+    # set up logging
+    set_up_logging(cfg)
+
+    # print config
+    logging.info(f"config:\n{yaml.dump(cfg)} \n--------------------\n")
+
+    # run
+    run(cfg)
 
 
 if __name__ == "__main__":
-    with open(CFG_PATH, "r") as f:
-        cfg = yaml.load(f, Loader=yaml.FullLoader)  # dict object
+    # cfg_path = CFG_PATH  # change as desired
+    cfg_path = "configs/code_testing.yaml"
 
-    run(cfg)
+    main(cfg_path=cfg_path)

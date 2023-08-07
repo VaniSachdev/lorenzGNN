@@ -3,12 +3,8 @@
 ################################################################################
 
 # imports
-import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-
-from utils.lorenz import lorenzDataset, DEFAULT_TIME_RESOLUTION
 
 
 def plot_true_vs_pred(y_true, y_pred):

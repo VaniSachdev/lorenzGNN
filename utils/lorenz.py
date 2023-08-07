@@ -51,7 +51,7 @@ class lorenzDatasetWrapper():
             train_pct=1.0,
             val_pct=0.0,
             test_pct=0.0):
-
+        logging.debug('initializing lorenzDatasetWrapper')
         assert abs(train_pct + val_pct + test_pct - 1.0) < 0.001
         # use error term due to float errors
 
@@ -291,7 +291,7 @@ class lorenzDataset(Dataset):
 
         # create sparse adjacency matrix
         self.a = self.compute_adjacency_matrix()
-        print('done computing adj')
+        logging.debug('done computing adj')
 
         # read data from computer
         data = np.load(self.path, allow_pickle=True)
@@ -358,7 +358,7 @@ class lorenzDataset(Dataset):
     def generate_window_data(self):
         logging.info('generating window data')
         if self.rand_buffer:
-            # TODO: maybe use an exponential distribution to determine buffer space
+            # TODO: get rid of this parameter
             raise NotImplementedError
         else:
             # equally spaced sets of samples

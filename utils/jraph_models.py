@@ -1,17 +1,9 @@
-import numpy as np
-
-import matplotlib.pyplot as plt
-from lorenz import lorenzDatasetWrapper
-from plotters import plot_data
-
 import jraph
 import jax
 import jax.numpy as jnp
 import networkx as nx
 import haiku as hk
 
-import functools
-import optax
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
 
 from utils.jraph_data import convert_jraph_to_networkx_graph
@@ -71,7 +63,7 @@ class MLPBlock(hk.Module):
 
 
 class MLPGraphNetwork(hk.Module):
-    """GraphNetwork consisting of a sequence of MLPBlocks."""
+    """GraphNetwork consist of a sequence of MLPBlocks."""
 
     def __init__(
         self,

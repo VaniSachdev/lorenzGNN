@@ -1,8 +1,4 @@
-import numpy as np
-
-import matplotlib.pyplot as plt
-from lorenz import lorenzDatasetWrapper
-from plotters import plot_data
+from utils.lorenz import lorenzDatasetWrapper
 
 import jraph
 import jax
@@ -10,33 +6,33 @@ import jax.numpy as jnp
 import networkx as nx
 import haiku as hk
 
-import functools
-import optax
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
+import logging
+import pdb
 
 
-def lorenz_graph_tuple_list(
-        predict_from="X1X2_window", 
-        n_samples=2_000, 
-        input_steps=1,
-        output_delay=0,
-        output_steps=0,
-        min_buffer=0,
-        K=36,
-        F=8,
-        c=10,
-        b=10,
-        h=1,
-        coupled=True,
-        time_resolution=100, 
-        seed=42,
-        init_buffer_steps=100,
-        return_buffer=False,
-        train_pct=0.7,
-        val_pct=0.2,
-        test_pct=0.1,
-        override=False):
+def lorenz_graph_tuple_list(predict_from="X1X2_window",
+                            n_samples=2_000,
+                            input_steps=1,
+                            output_delay=0,
+                            output_steps=0,
+                            min_buffer=0,
+                            K=36,
+                            F=8,
+                            c=10,
+                            b=10,
+                            h=1,
+                            coupled=True,
+                            time_resolution=100,
+                            seed=42,
+                            init_buffer_steps=100,
+                            return_buffer=False,
+                            train_pct=0.7,
+                            val_pct=0.2,
+                            test_pct=0.1,
+                            override=False):
     """ Generated data using Lorenz96 and splits data into train and val. 
+        # TODO: update docstring 
 
         Args: 
             n_samples (int): number of data points to generate data for. 
@@ -44,44 +40,51 @@ def lorenz_graph_tuple_list(
         Output:
             returns a dict with two keys, "train" and "val", each corresponding to a list of jraph.GraphsTuple objects. 
     """
+    logging.debug('Generating graph tuples')
     # i'm just going to pull the data out of a lorenz spektral dataset
     # this is computationally inefficient but convenient code-wise so I don't
     # have to rewrite all the normalization functions and stuff
-    dataset = lorenzDatasetWrapper(
-        predict_from=predict_from,
-        n_samples=n_samples,
-        input_steps=input_steps,
-        output_delay=output_delay,
-        output_steps=output_steps,
-        min_buffer=min_buffer,
-        rand_buffer=False,
-        K=K,
-        F=F,
-        c=c,
-        b=b,
-        h=h,
-        coupled=coupled,
-        time_resolution=time_resolution, 
-        seed=seed,
-        init_buffer_steps=init_buffer_steps,
-        return_buffer=return_buffer,
-        train_pct=train_pct,
-        val_pct=val_pct,
-        test_pct=test_pct,
-        override=override)
+    dataset = lorenzDatasetWrapper(predict_from=predict_from,
+                                   n_samples=n_samples,
+                                   input_steps=input_steps,
+                                   output_delay=output_delay,
+                                   output_steps=output_steps,
+                                   min_buffer=min_buffer,
+                                   rand_buffer=False,
+                                   K=K,
+                                   F=F,
+                                   c=c,
+                                   b=b,
+                                   h=h,
+                                   coupled=coupled,
+                                   time_resolution=time_resolution,
+                                   seed=seed,
+                                   init_buffer_steps=init_buffer_steps,
+                                   return_buffer=return_buffer,
+                                   train_pct=train_pct,
+                                   val_pct=val_pct,
+                                   test_pct=test_pct,
+                                   override=override)
     dataset.normalize()
 
-    graph_tuple_lists = {'train': [], 'val': []}
+    graph_tuple_lists = {'train': [], 'val': [], 'test': []}
 
     for g in dataset.train:
         # g.x has shape 36 x 2
         graph_tuple = timestep_to_graphstuple(g.x, K=K)
         graph_tuple_lists['train'].append(graph_tuple)
 
-    for g in dataset.val:
-        # g.x has shape 36 x 2
-        graph_tuple = timestep_to_graphstuple(g.x, K=K)
-        graph_tuple_lists['val'].append(graph_tuple)
+    if dataset.val is not None:
+        for g in dataset.val:
+            # g.x has shape 36 x 2
+            graph_tuple = timestep_to_graphstuple(g.x, K=K)
+            graph_tuple_lists['val'].append(graph_tuple)
+
+    if dataset.test is not None:
+        for g in dataset.test:
+            # g.x has shape 36 x 2
+            graph_tuple = timestep_to_graphstuple(g.x, K=K)
+            graph_tuple_lists['test'].append(graph_tuple)
 
     return graph_tuple_lists
 
@@ -142,8 +145,10 @@ def get_data_windows(graph_tuple_list, n_rollout_steps, timestep_duration: int):
             n_rollout_steps (int): number of steps for rollout output
 
         Returns:
-            inputs, 1D list of length (timesteps - 2 - n_rollout_steps)
-            targets, 2D list of size (timesteps - 2 - n_rollout_steps, n_rollout_steps)
+            inputs, 1D list of GraphTuples, with length 
+                (datapoints - n_rollout_steps * timestep_duration)
+            targets, 2D list of GraphTuples, with shape 
+                (datapoints - n_rollout_steps * timestep_duration, n_rollout_steps)
     """
     inputs = []
     targets = []
@@ -153,7 +158,7 @@ def get_data_windows(graph_tuple_list, n_rollout_steps, timestep_duration: int):
     orig_timesteps = len(graph_tuple_list)
     n_timesteps = orig_timesteps - n_rollout_steps * timestep_duration
 
-    print(orig_timesteps, n_timesteps)
+    # print(orig_timesteps, n_timesteps)
     for i in range(n_timesteps):
         input_graph = graph_tuple_list[i]
         target_graphs = graph_tuple_list[i + timestep_duration:i +
@@ -181,6 +186,8 @@ def data_list_to_dict(graph_tuple_list: Iterable[jraph.GraphsTuple],
     # print(type(targets_list[0]))
     # print(len(targets_list[0][0]))
     # print(type(targets_list[0][0]))
+    # pdb.set_trace()
+
     data_dict_list = [
         {
             'input_graph': inputs_list[i],  # input is a single graph

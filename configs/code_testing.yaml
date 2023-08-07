@@ -2,7 +2,7 @@ DATA:
   LOAD_EXISTING: False
   DATA_PATH: INSERT
   PREDICTION_PARADIGM: X1X2_window
-  N_SAMPLES: 20_000
+  N_SAMPLES: 100
   INPUT_STEPS: 1
   OUTPUT_DELAY: 0
   OUTPUT_STEPS: 0
@@ -23,7 +23,7 @@ DATA:
     VAL_PCT: 0.2
     TEST_PCT: 0.1
   N_ROLLOUT_STEPS: 2
-  TIMESTEP_DURATION: 25
+  TIMESTEP_DURATION: 4
   SEED: 42
   OVERRIDE: False
 
@@ -33,12 +33,14 @@ MODEL:
   SPATIAL: True 
 
 OUTPUT_DIR: "outputs/"
+LOG_LEVEL: DEBUG
+
 TRAIN:
   ENABLE: True
   RESUME_FROM_CHECKPOINT: False
   # CHECKPOINT_FNAME: ""
   # if resume_from_checkpoint true and no explicit checkpoint, resume from the latest epoch
-  MAX_EPOCHS: 2
+  MAX_EPOCHS: 5
   LOAD_PARAMS: False
   PARAM_PATH: ""
 
