@@ -1,6 +1,6 @@
-from utils.jraph_data import lorenz_graph_tuple_list, data_list_to_dict
-from utils.jraph_models import MLPBlock_fn, MLPGraphNetwork_fn, naive_const_fn, naive_zero_fn
-from utils.jraph_training import train, evaluate
+from utils.jraph_data import get_lorenz_graph_tuples
+from utils.jraph_models import MLPBlock, MLPGraphNetwork
+from utils.jraph_training_haiku import train, evaluate
 
 import os
 import yaml
@@ -12,13 +12,15 @@ CFG_PATH = "configs/default_cfg.yaml"
 
 
 def get_dataset(cfg):
-    graph_tuple_lists = lorenz_graph_tuple_list(
+    # TODO rename this function get_lorenz_graph_tuples
+    data_dict_lists = get_lorenz_graph_tuples(
         predict_from=cfg["DATA"]["PREDICTION_PARADIGM"],
         n_samples=cfg["DATA"]["N_SAMPLES"],
         input_steps=cfg["DATA"]["INPUT_STEPS"],
         output_delay=cfg["DATA"]["OUTPUT_DELAY"],
         output_steps=cfg["DATA"]["OUTPUT_STEPS"],
-        min_buffer=cfg["DATA"]["MIN_BUFFER"],
+        timestep_duration=cfg["DATA"]["TIMESTEP_DURATION"],
+        sample_buffer=cfg["DATA"]["SAMPLE_BUFFER"],
         K=cfg["DATA"]["LORENZ"]["K"],
         F=cfg["DATA"]["LORENZ"]["F"],
         c=cfg["DATA"]["LORENZ"]["C"],
@@ -27,29 +29,18 @@ def get_dataset(cfg):
         coupled=cfg["DATA"]["LORENZ"]["COUPLED"],
         time_resolution=cfg["DATA"]["TIME_RESOLUTION"],
         seed=cfg["DATA"]["SEED"],
-        init_buffer_steps=cfg["DATA"]["BUFFER"]["INIT_BUFFER_STEPS"],
+        init_buffer_samples=cfg["DATA"]["BUFFER"]["INIT_BUFFER_SAMPLES"],
         return_buffer=cfg["DATA"]["BUFFER"]["RETURN_BUFFER"],
         train_pct=cfg["DATA"]["SPLIT"]["TRAIN_PCT"],
         val_pct=cfg["DATA"]["SPLIT"]["VAL_PCT"],
         test_pct=cfg["DATA"]["SPLIT"]["TEST_PCT"],
         override=cfg["DATA"]["OVERRIDE"])
 
-    n_rollout_steps = cfg["DATA"]["N_ROLLOUT_STEPS"]
-    timestep_duration = cfg["DATA"]["TIMESTEP_DURATION"]
-    data_dict_lists = {
-        'train':
-        data_list_to_dict(graph_tuple_lists['train'],
-                          n_rollout_steps=n_rollout_steps,
-                          timestep_duration=timestep_duration),
-        'val':
-        data_list_to_dict(graph_tuple_lists['val'],
-                          n_rollout_steps=n_rollout_steps,
-                          timestep_duration=timestep_duration),
-        'test':
-        data_list_to_dict(graph_tuple_lists['test'],
-                          n_rollout_steps=n_rollout_steps,
-                          timestep_duration=timestep_duration)
-    }
+    # output_steps = cfg["DATA"]["OUTPUT_STEPS"]
+    # timestep_duration = cfg["DATA"]["TIMESTEP_DURATION"]
+    print("type(data_dict_lists)", type(data_dict_lists))
+    print("type(data_dict_lists['train'])", type(data_dict_lists['train']))
+    pdb.set_trace()
 
     return data_dict_lists
 
@@ -58,10 +49,10 @@ def get_model_fn(cfg):
     model_arch = cfg["MODEL"]["ARCH"]
 
     model_fns = {
-        "naive_zero": naive_zero_fn,
-        "naive_const": naive_const_fn,
-        "MLP_block": MLPBlock_fn,
-        "MLP_graph_network": MLPGraphNetwork_fn
+        # "naive_zero": naive_zero_fn,
+        # "naive_const": naive_const_fn,
+        "MLP_block": MLPBlock,
+        "MLP_graph_network": MLPGraphNetwork
     }
 
     assert model_arch in model_fns.keys()
@@ -109,13 +100,23 @@ def run(cfg):
     logging.info("run complete")
 
 
-def set_up_logging(cfg):
-    log_dir = os.path.join(cfg["OUTPUT_DIR"], "logs")
-    log_path = os.path.join(
-        log_dir, f"stdout_{datetime.now().strftime('%y-%m-%d_%H:%M:%S')}.log")
+def set_up_logging(cfg=None, log_path=None, log_level_str="INFO"):
+    """ Set up logging to an output file. If a config is given, the logging parameters will be read from the config. Otherwise, the log_path must be given. """
+    if cfg is not None:
+        log_dir = os.path.join(cfg["OUTPUT_DIR"], "logs")
+        log_path = os.path.join(
+            log_dir,
+            f"stdout_{datetime.now().strftime('%y-%m-%d_%H:%M:%S')}.log")
 
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+
+        log_level_str = cfg["LOG_LEVEL"]
+
+    else:
+        assert log_path is not None
+        if not os.path.exists(os.path.dirname(log_path)):
+            os.makedirs(os.path.dirname(log_path))
 
     log_level = {
         "DEBUG": logging.DEBUG,
@@ -123,8 +124,7 @@ def set_up_logging(cfg):
         "WARNING": logging.WARNING,
         "ERROR": logging.ERROR,
         "CRITICAL": logging.CRITICAL
-    }[cfg["LOG_LEVEL"]]
-    # TODO: check it it creates the directory if it doesn't exist
+    }[log_level_str]
 
     logging.basicConfig(filename=log_path, encoding='utf-8', level=log_level)
 

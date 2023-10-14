@@ -2,118 +2,161 @@ import jraph
 import jax
 import jax.numpy as jnp
 import networkx as nx
-import haiku as hk
+from flax import linen as nn
 
-from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
+from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable, Sequence
 
 from utils.jraph_data import convert_jraph_to_networkx_graph
 
 
-@jraph.concatenated_args
-def edge_update_fn(feats: jnp.ndarray) -> jnp.ndarray:
-    """Edge update function for graph net."""
-    net = hk.nets.MLP(output_sizes=[36, 1])
-    return net(feats)
+def add_graphs_tuples_nodes(
+    graphs: jraph.GraphsTuple, other_graphs: jraph.GraphsTuple
+) -> jraph.GraphsTuple:
+  """Adds only the node features from other_graphs to graphs."""
+  return graphs._replace(
+      nodes=graphs.nodes + other_graphs.nodes,
+      edges=graphs.edges,
+      globals=graphs.globals,
+  )
 
 
-@jraph.concatenated_args
-def node_update_fn(feats: jnp.ndarray) -> jnp.ndarray:
-    """Node update function for graph net."""
-    net = hk.nets.MLP(output_sizes=[36, 2])
-    return net(feats)
+class MLP(nn.Module):
+    """ A multi-layer perceptron.
+    
+        Copied from Flax example models. 
+    """
+
+    feature_sizes: Sequence[int]
+    dropout_rate: float = 0
+    deterministic: bool = True
+    activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.relu
+    # TODO: would be nice if we could set a custom name for the module 
+
+    @nn.compact
+    def __call__(self, inputs):
+        x = inputs
+        for size in self.feature_sizes:
+            x = nn.Dense(features=size)(x)
+            x = self.activation(x)
+            x = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)(
+                x
+            )
+        return x
 
 
-@jraph.concatenated_args
-def update_global_fn(feats: jnp.ndarray) -> jnp.ndarray:
-    """Global update function for graph net."""
-    net = hk.nets.MLP(output_sizes=[1])
-    return net(feats)
+class MLPBlock(nn.Module):
+    """ A single Graph Network block containing MLP functions. 
+    
+        Modified from Flax GN example code. 
+    """
+    dropout_rate: float = 0
+    skip_connections: bool = True
+    layer_norm: bool = False 
+    deterministic: bool = True
+
+    @nn.compact
+    def __call__(self, graphs: jraph.GraphsTuple) -> jraph.GraphsTuple:
+        # TODO: do we actually not want these? 
+        update_edge_fn = jraph.concatenated_args(
+            MLP(
+                feature_sizes=[16, 8], # arbitrarily chosen for now
+                dropout_rate=self.dropout_rate,
+                deterministic=self.deterministic,
+            )
+        )
+
+        update_node_fn = jraph.concatenated_args(
+            MLP(
+                feature_sizes=[32, 2], # arbitrarily chosen for now. we want the last layer to be 2 so that we get the same number of node features that we put in. 
+                dropout_rate=self.dropout_rate,
+                deterministic=self.deterministic,
+            )
+        )
+        # update_global_fn = jraph.concatenated_args(
+        #     MLP(
+        #         feature_sizes=[1],
+        #         dropout_rate=self.dropout_rate,
+        #         deterministic=self.deterministic,
+        #     )
+        # )
+
+        graph_net = jraph.GraphNetwork(
+            update_node_fn=update_node_fn,
+            update_edge_fn=update_edge_fn,
+            update_global_fn=None,
+        )
+
+        processed_graphs = graph_net(graphs)
+        # revert edge features to their original values
+        # we want the edges to be encoded/processed by the update_edge_fn internally as part of the processing for the node features, but we only use the encoded edges internally and don't want it to affect the actual graph structure of the data because we know that it is fixed 
+        processed_graphs = processed_graphs._replace(edges=graphs.edges)
+
+        if self.skip_connections:
+            processed_graphs = add_graphs_tuples_nodes(processed_graphs, graphs)
+
+        if self.layer_norm:
+            # TODO: why does layernorm cause the edge features to all be 0? 
+            processed_graphs = processed_graphs._replace(
+                nodes=nn.LayerNorm()(processed_graphs.nodes),
+                edges=nn.LayerNorm()(processed_graphs.edges),
+                globals=nn.LayerNorm()(processed_graphs.globals),
+            )
+
+        return processed_graphs
+    
+
+class MLPGraphNetwork(nn.Module):
+    """ A complete Graph Network core consisting of a sequence of MLPBlocks. 
+    """
+    n_blocks: int # i.e. number of message-passing steps if params are shared
+    share_params: bool # whether iterated blocks should be identical or distinct
+    dropout_rate: float = 0
+    skip_connections: bool = True
+    layer_norm: bool = False
+    deterministic: bool = True
+
+    @nn.compact
+    def __call__(self, graphs: jraph.GraphsTuple) -> jraph.GraphsTuple:
+        blocks = []
+        # TODO: should we be defining blocks here or in some kind of init/setup function ?
+
+        if self.share_params:
+            shared_block = MLPBlock(
+                dropout_rate=self.dropout_rate,
+                skip_connections = self.skip_connections,
+                layer_norm = self.layer_norm,
+                deterministic = self.deterministic           
+            )
+            for _ in range(self.n_blocks):
+                blocks.append(shared_block)
+                # TODO: i have no idea if this will actually work i.e. will it be recurrent or not. would need to check size of params to verify
+        else:
+            for _ in range(self.n_blocks):
+                blocks.append(MLPBlock(
+                    dropout_rate=self.dropout_rate,
+                    skip_connections = self.skip_connections,
+                    layer_norm = self.layer_norm,
+                    deterministic = self.deterministic           
+                ))
+                # TODO: check that this create distinct blocks with unshared params
+
+        # Apply a Graph Network once for each message-passing round.
+        processed_graphs = nn.Sequential(blocks)(graphs)
+        # TODO: do we need skip connections or layer_norm here? 
+
+        return processed_graphs
 
 
-class MLPBlock(hk.Module):
 
-    def __init__(
-        self,
-        #  edge_mlp_features: Iterable[int],
-        #  node_mlp_features: Iterable[int],
-        #  graph_mlp_features: Iterable[int],
-        name: str = "MLPBlock"):
-        """ A function that creates a single GN block with MLP edge, node, and global models, and then passes input_graph through the model to transform it
-
-            Returns: a transformed graph
-
-            Args:
-                input_graph:
-                *_mlp_features (int list):
-        """
-        super(MLPBlock, self).__init__(name=name)
-        self._graph_net = jraph.GraphNetwork(update_node_fn=node_update_fn,
-                                             update_edge_fn=None,
-                                             update_global_fn=None)
-        # we have to use a lambda we want to return a function, not the module itself. it we try to return the module, we will get an error that the module must be initialized inside hk.transform
-
-    def __call__(self, input_graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
-        return self._graph_net(input_graph)
+# TODO: do we still need these 
+# def MLPBlock_fn(graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
+#     net = MLPBlock()
+#     return net(graph)
 
 
-# we need to concat_args decorator because the GraphNetwork will pass in
-# multiple arguments (e.g. edges + source features + etc etc)
-# TODO: maybe turn this into a partial func? so then we can pass in custom
-# output_sizes
-
-
-class MLPGraphNetwork(hk.Module):
-    """GraphNetwork consist of a sequence of MLPBlocks."""
-
-    def __init__(
-        self,
-        n_blocks: int,
-        #  edge_mlp_features:Iterable[int],
-        #  node_mlp_features:Iterable[int],
-        #  graph_mlp_features:Iterable[int],
-        name: str = "MLPGraphNetwork"):
-        """ Initializes
-
-            Args:
-                n_blocks (int): number of MLP blocks
-                recurrent (bool): whether or not to share weights btwn blocks
-        """
-        super(MLPGraphNetwork, self).__init__(name=name)
-        self.n_blocks = n_blocks
-        # this feels stupid
-        # TODO: this probably needs lax.scan for a for loop
-        self._network = hk.Sequential([
-            MLPBlock(),
-            MLPBlock(),
-            MLPBlock(),
-            MLPBlock(),
-            MLPBlock(),
-            MLPBlock(),
-            MLPBlock(),
-            MLPBlock(),
-            MLPBlock()
-        ])
-        # this commented out code produces errors
-        # self._network = hk.Sequential([
-        #     MLPBlock(
-        #         # edge_mlp_features,
-        #         #  node_mlp_features,
-        #         #  graph_mlp_features,
-        #         name=f'Block_{i}')
-        # ] for i in range(n_blocks))
-
-    def __call__(self, input_graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
-        return self._network(input_graph)
-
-
-def MLPBlock_fn(graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
-    net = MLPBlock()
-    return net(graph)
-
-
-def MLPGraphNetwork_fn(input_graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
-    net = MLPGraphNetwork(n_blocks=9)
-    return net(input_graph)
+# def MLPGraphNetwork_fn(input_graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
+#     net = MLPGraphNetwork(n_blocks=9)
+#     return net(input_graph)
 
 
 def naive_const_fn(graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
