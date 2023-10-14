@@ -20,7 +20,7 @@ class DataTests(unittest.TestCase):
         K = 36
         n_days = 2
         time_resolution = DEFAULT_TIME_RESOLUTION
-        init_buffer_steps = 100
+        init_buffer_samples = 100
 
         df = lorenzToDF(
             K=K,
@@ -32,11 +32,11 @@ class DataTests(unittest.TestCase):
             n_steps=None,  # 30 * 100,
             n_days=n_days,
             time_resolution=time_resolution,
-            init_buffer_steps=init_buffer_steps,
+            init_buffer_samples=init_buffer_samples,
             return_buffer=True,
             seed=42)
-        self.assertEqual(df.shape,
-                         (n_days * time_resolution + init_buffer_steps, K * 2))
+        self.assertEqual(
+            df.shape, (n_days * time_resolution + init_buffer_samples, K * 2))
 
     def test_lorenzDatasetWrapper_X2single(self):
         logging.info(
@@ -54,7 +54,7 @@ class DataTests(unittest.TestCase):
                                        h=1,
                                        coupled=True,
                                        time_resolution=DEFAULT_TIME_RESOLUTION,
-                                       init_buffer_steps=buffer,
+                                       init_buffer_samples=buffer,
                                        return_buffer=True,
                                        seed=42,
                                        override=True,

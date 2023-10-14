@@ -19,6 +19,7 @@ from spektral.utils import gcn_filter
 
 from datetime import datetime
 import logging
+import pdb
 
 DEFAULT_TIME_RESOLUTION = 100
 
@@ -28,29 +29,85 @@ class lorenzDatasetWrapper():
 
     def __init__(
             self,
-            predict_from="X1X2_window",
-            n_samples=10000,
-            preprocessing=True,
-            simple_adj=False,
-            input_steps=2 * DEFAULT_TIME_RESOLUTION,  # 2 days
-            output_delay=1 * DEFAULT_TIME_RESOLUTION,  # 1 day
-            output_steps=1,
-            min_buffer=10,
-            rand_buffer=False,
+            predict_from,
+            n_samples,
+            input_steps,  
+            output_delay,  
+            output_steps,
+            timestep_duration,
+            sample_buffer,
+            time_resolution,
+            init_buffer_samples,
+            return_buffer,
+            train_pct,
+            val_pct,
+            test_pct,
             K=36,
             F=8,
             c=10,
             b=10,
             h=1,
             coupled=True,
-            time_resolution=DEFAULT_TIME_RESOLUTION,
-            init_buffer_steps=100,
-            return_buffer=True,
+            preprocessing=True, # TODO: check if this was only for GCN? we should need this for GraphNet right? 
+            simple_adj=False,
             seed=42,
             override=False,
-            train_pct=1.0,
-            val_pct=0.0,
-            test_pct=0.0):
+            ):
+        """ Initialize a lorenzDatasetWrapper object. 
+        
+        Args:
+            predict_from (str): prediction paradigm. Options are "X1X2_window", 
+                in which the target X1 and X2 states are predicted from the 
+                input X1 and X2 states; and "X2", in which the target X1 state 
+                is predicted from the input X2 state.
+            n_samples (int): number of samples (windows) to generate data for.
+            input_steps (int): number of timesteps in each input window.
+            output_delay (int): number of timesteps strictly between the end of 
+                the input window and the start of the output window.
+            output_steps (int): number of timesteps in each output window.
+            timestep_duration (int): the sampling rate for data points from the 
+                raw Lorenz simulation data, i.e. the number of raw simulation 
+                data points between consecutive timestep samples, i.e. the 
+                slicing step size. all data points are separated by this value.
+            sample_buffer (int): number of timesteps strictly between the end 
+                of one full sample and the start of the next sample.
+            time_resolution (int): the inverse of the delta t used in the 
+                Lorenz ODE integration (∆t = 1/time_resolution); the number of 
+                raw data points generated per time unit, equivalent to the 
+                number of data points generated per 5 days in the simulation.
+            init_buffer_samples (int): number of full samples (includes input 
+                and output windows) to generate before the first training 
+                sample to allow for the system to settle. can be saved to use 
+                or ignore during normalization.      
+            return_buffer (bool): whether or not to save the buffer samples in 
+                a class attribute. if saved, they will contribute to the 
+                normalization step. useful to save only if generating a tiny 
+                training set and need more data points for normalization; 
+                otherwise, recomment discarding. 
+            train_pct (float): percentage of samples to use for training.
+            val_pct (float): percentage of samples to use for validation.
+            test_pct (float): percentage of samples to use for testing.
+            K (int): number of nodes on the circumference of the Lorenz96 model
+            F (float): Lorenz96 forcing constant. (K=36 and F=8 corresponds to 
+                an error-doubling time of 2.1 days, similar to the real 
+                atmosphere)
+            c (float): Lorenz96 time-scale ratio ?
+            b (float): Lorenz96 spatial-scale ratio ?
+            h (float): Lorenz96 coupling parameter ?
+            coupled (bool): whether to use the coupled 2-layer Lorenz96 model 
+                or original 1-layer Lorenz96 model
+            preprocessing (bool): whether or not to apply the gcn_filter 
+                preprocessing step to add self-loops and normalize the 
+                adjacency matrix. if False, the adjacency matrix will contain 
+                self-loops but won't be normalized.  
+            simple_adj (bool): ?????? TODO fix 
+            NOTE: preprocessing and simple_adj are vestigial from the GCN and not needed for the jraph GraphNet models
+            # TODO: rename preprocessing to something more descriptive
+            seed (int): for reproducibility 
+            override (bool): whether or not to regenerate data that was 
+                already generated previously
+
+        """
         logging.debug('initializing lorenzDatasetWrapper')
         assert abs(train_pct + val_pct + test_pct - 1.0) < 0.001
         # use error term due to float errors
@@ -59,6 +116,7 @@ class lorenzDatasetWrapper():
         self.predict_from = predict_from
         self.n_samples = int(n_samples)
         self.preprocessing = preprocessing
+        self.timestep_duration = timestep_duration
         self.K = K
         self.F = F
         self.c = c
@@ -66,60 +124,60 @@ class lorenzDatasetWrapper():
         self.h = h
         self.coupled = coupled
         self.time_resolution = int(time_resolution)
-        self.init_buffer_steps = init_buffer_steps
+        self.init_buffer_samples = init_buffer_samples
         self.return_buffer = return_buffer
         self.seed = seed
+        # TODO: rename buffer/sample_buffer to be more distinguishable
 
         if self.predict_from == "X2":
+            raise NotImplementedError("X2 code is not up to date")
             self.input_steps = 1
             self.output_steps = 1
             self.output_delay = 0
-            self.min_buffer = 0
-            self.rand_buffer = rand_buffer
+            self.sample_buffer = 0
         else:
+            assert self.predict_from == "X1X2_window"
             self.input_steps = int(input_steps)
             self.output_steps = int(output_steps)
             self.output_delay = int(output_delay)
-            self.min_buffer = int(min_buffer)
-            self.rand_buffer = rand_buffer
+            self.sample_buffer = int(sample_buffer)
 
         self.train_pct = train_pct
         self.val_pct = val_pct
         self.test_pct = test_pct
 
         # generate dataset
-        dataset_raw = lorenzDataset(predict_from=self.predict_from,
-                                    n_samples=self.n_samples,
-                                    preprocessing=self.preprocessing,
-                                    simple_adj=simple_adj,
-                                    input_steps=self.input_steps,
-                                    output_delay=self.output_delay,
-                                    output_steps=self.output_steps,
-                                    min_buffer=self.min_buffer,
-                                    rand_buffer=self.rand_buffer,
-                                    K=self.K,
-                                    F=self.F,
-                                    c=self.c,
-                                    b=self.b,
-                                    h=self.h,
-                                    coupled=self.coupled,
-                                    time_resolution=self.time_resolution,
-                                    init_buffer_steps=self.init_buffer_steps,
-                                    return_buffer=self.return_buffer,
-                                    seed=self.seed,
-                                    override=override)
+        dataset_raw = lorenzDataset(
+            predict_from=self.predict_from,
+            n_samples=self.n_samples + self.init_buffer_samples,
+            preprocessing=self.preprocessing,
+            simple_adj=simple_adj,
+            input_steps=self.input_steps,
+            output_delay=self.output_delay,
+            output_steps=self.output_steps,
+            timestep_duration=self.timestep_duration,
+            sample_buffer=self.sample_buffer,
+            K=self.K,
+            F=self.F,
+            c=self.c,
+            b=self.b,
+            h=self.h,
+            coupled=self.coupled,
+            time_resolution=self.time_resolution,
+            seed=self.seed,
+            override=override)
         # split dataset
-        if init_buffer_steps > 0 and return_buffer:
-            self.buffer = dataset_raw[:init_buffer_steps]
-            dataset = dataset_raw[init_buffer_steps:]
+        if init_buffer_samples > 0 and return_buffer:
+            self.buffer = dataset_raw[:init_buffer_samples]
         else:
             self.buffer = None
-            dataset = dataset_raw
+
+        dataset = dataset_raw[init_buffer_samples:]
 
         train_bound = round(train_pct * dataset.n_graphs)
         val_bound = round((train_pct + val_pct) * dataset.n_graphs)
 
-        self.train = dataset[:train_bound]
+        self.train = dataset[:train_bound] # check dataset dimensions if multiple inputs/outputs 
         self.val = None if train_pct == 1 else dataset[train_bound:val_bound]
         self.test = None if train_pct + val_pct == 1 else dataset[val_bound:]
 
@@ -134,8 +192,7 @@ class lorenzDatasetWrapper():
         # but theoretically should drop once we use larger datasets because the buffer is throwaway data (to give the Lorenz model time to settle)
         # TODO: add flag to keep/drop buffer data in normalization
 
-        self.X1_mean, self.X1_std, self.X2_mean, self.X2_std = norm_input.get_mean_std(
-        )
+        self.X1_mean, self.X1_std, self.X2_mean, self.X2_std = norm_input.get_mean_std()
         if self.buffer is not None:
             self.buffer.normalize(self.X1_mean, self.X1_std, self.X2_mean,
                                   self.X2_std)
@@ -155,60 +212,70 @@ class lorenzDataset(Dataset):
 
     def __init__(
             self,
-            predict_from="X1X2_window",
-            n_samples=10000,
-            preprocessing=True,
-            simple_adj=False,
-            input_steps=2 * DEFAULT_TIME_RESOLUTION,  # 2 days
-            output_delay=1 * DEFAULT_TIME_RESOLUTION,  # 1 day
-            output_steps=1,
-            min_buffer=10,
-            rand_buffer=False,
+            predict_from,
+            n_samples,
+            input_steps, 
+            output_delay,  
+            output_steps,
+            timestep_duration,
+            sample_buffer,
+            time_resolution,
             K=36,
             F=8,
             c=10,
             b=10,
             h=1,
             coupled=True,
-            time_resolution=DEFAULT_TIME_RESOLUTION,
-            init_buffer_steps=100,
-            return_buffer=True,
+            preprocessing=True,
+            simple_adj=False,
             seed=42,
             override=False,
             **kwargs):
-        """ Args: 
-                predict_from (str): "X1X2_window", "X2_window", or "X2". 
-                    indicates the structure of input/target data
-                n_samples (int): sets of data samples to generate. (each sample 
-                    contains <input_steps> steps of input data + <output_steps> 
-                    steps of output data)
-                preprocess (bool): whether or not to apply the gcn_filter 
-                    preprocessing step to add self-loops and normalize the 
-                    adjacency matrix. if False, the adjacency matrix will contain self-loops but won't be normalized. 
-                input_steps (int): num of timesteps in each input window (only used if predict_from uses a window)
-                output_steps (int): num of timesteps in each output window (only used if predict_from uses a window)
-                output_delay (int): number of time_steps between end of input 
-                    window and start of output window (only used if predict_from uses a window)
-                min_buffer (int): min number of time_steps between end of output
-                    window and start of input window (only used if predict_from uses a window)
-                rand_buffer (bool): whether or not the buffer between sets of 
-                    data will have a random or fixed length (only used if predict_from uses a window)
-                K (int): number of points on the circumference
-                F (float): forcing constant
-                c (float): time-scale ratio ?
-                b (float): spatial-scale ratio ?
-                h (float): coupling parameter ?
-                coupled (bool): whether to use the coupled 2-layer model or 
-                    original 1-layer model
-                time_resolution (float): number of timesteps per "day" in the simulation, i.e. inverse timestep for the ODE integration
-                seed (int): for reproducibility 
-                override (bool): whether or not to regenerate data that was 
-                    already generated previously
+        """ 
+        Args:
+            predict_from (str): prediction paradigm. Options are "X1X2_window", 
+                in which the target X1 and X2 states are predicted from the 
+                input X1 and X2 states; and "X2", in which the target X1 state 
+                is predicted from the input X2 state.
+            n_samples (int): number of samples (windows) to generate data for.
+            input_steps (int): number of timesteps in each input window.
+            output_delay (int): number of timesteps strictly between the end of 
+                the input window and the start of the output window.
+            output_steps (int): number of timesteps in each output window.
+            timestep_duration (int): the sampling rate for data points from the 
+                raw Lorenz simulation data, i.e. the number of raw simulation 
+                data points between consecutive timestep samples, i.e. the 
+                slicing step size. all data points are separated by this value.
+            sample_buffer (int): number of timesteps strictly between the end 
+                of one full sample and the start of the next sample.
+            time_resolution (int): the inverse of the delta t used in the 
+                Lorenz ODE integration (∆t = 1/time_resolution); the number of 
+                raw data points generated per time unit, equivalent to the 
+                number of data points generated per 5 days in the simulation.
+            K (int): number of nodes on the circumference of the Lorenz96 model
+            F (float): Lorenz96 forcing constant. (K=36 and F=8 corresponds to 
+                an error-doubling time of 2.1 days, similar to the real 
+                atmosphere)
+            c (float): Lorenz96 time-scale ratio ?
+            b (float): Lorenz96 spatial-scale ratio ?
+            h (float): Lorenz96 coupling parameter ?
+            coupled (bool): whether to use the coupled 2-layer Lorenz96 model 
+                or original 1-layer Lorenz96 model
+            preprocessing (bool): whether or not to apply the gcn_filter 
+                preprocessing step to add self-loops and normalize the 
+                adjacency matrix. if False, the adjacency matrix will contain 
+                self-loops but won't be normalized.  
+            simple_adj (bool): ?????? TODO fix 
+            seed (int): for reproducibility 
+            override (bool): whether or not to regenerate data that was 
+                already generated previously
+            **kwargs: additional arguments to pass to the Dataset superclass        
         """
         self.preprocessing = preprocessing
-        self.simple_adj = simple_adj
+        self.simple_adj = simple_adj # TODO: add to docstring 
         self.predict_from = predict_from
         self.n_samples = int(n_samples)
+        self.timestep_duration = timestep_duration
         self.K = K
         self.F = F
         self.c = c
@@ -216,8 +283,6 @@ class lorenzDataset(Dataset):
         self.h = h
         self.coupled = coupled
         self.time_resolution = int(time_resolution)
-        self.init_buffer_steps = init_buffer_steps
-        self.return_buffer = return_buffer
         self.seed = seed
         self.a = None  # self.a is set to None anyway in super __init__ so we have to define it in the read() function
 
@@ -225,31 +290,23 @@ class lorenzDataset(Dataset):
             self.input_steps = 1
             self.output_steps = 1
             self.output_delay = 0
-            self.min_buffer = 0
-            self.rand_buffer = rand_buffer
+            self.sample_buffer = 0
         else:
             self.input_steps = int(input_steps)
             self.output_steps = int(output_steps)
             self.output_delay = int(output_delay)
-            self.min_buffer = int(min_buffer)
-            self.rand_buffer = rand_buffer
+            self.sample_buffer = int(sample_buffer)
 
         if override and os.path.exists(self.path):
             os.remove(self.path)
 
-        # super().__init__(transforms=self.transforms,**kwargs)
         super().__init__(**kwargs)
 
     @property
     def path(self):
         """ define the file path where data will be stored/extracted. """
-        drive_base_path = '/content/drive/My Drive/_research ML AQ/lorenz 96 gnn/lorenz_data'  # obviously this must change depending on your own computer's file system
-        filename = "{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}_{}.npz".format(
-            self.predict_from, self.n_samples, self.input_steps,
-            self.output_steps, self.output_delay, self.min_buffer,
-            self.rand_buffer, self.K, self.F, self.c, self.b, self.h,
-            self.coupled, self.time_resolution, self.init_buffer_steps,
-            self.return_buffer, self.seed)
+        drive_base_path = '/content/drive/My Drive/_research ML AQ/lorenz 96 gnn/lorenz_data'  # NOTE: obviously this must change depending on your own computer's file system
+        filename = f"{self.predict_from}_{self.n_samples}_{self.input_steps}_{self.output_steps}_{self.output_delay}_{self.timestep_duration}_{self.sample_buffer}_{self.K}_{self.F}_{self.c}_{self.b}_{self.h}_{self.coupled}_{self.time_resolution}_{self.seed}.npz"
 
         # check if we're in colab or not because the file paths will be different
         if not os.path.exists(drive_base_path):
@@ -266,26 +323,31 @@ class lorenzDataset(Dataset):
         return path
 
     def get_config(self):
+        """ Retrieve a dictionary containing the configuration of the dataset."""
         return dict(predict_from=self.predict_from,
                     n_samples=self.n_samples,
                     input_steps=self.input_steps,
                     output_steps=self.output_steps,
                     output_delay=self.output_delay,
-                    min_buffer=self.min_buffer,
-                    rand_buffer=self.rand_buffer,
+                    sample_buffer=self.sample_buffer,
+                    time_resolution=self.time_resolution,
+                    timestep_duration=self.timestep_duration,
                     K=self.K,
                     F=self.F,
                     c=self.c,
                     b=self.b,
                     h=self.h,
                     coupled=self.coupled,
-                    time_resolution=self.time_resolution,
+                    preprocessing=self.preprocessing,
+                    simple_adj=self.simple_adj,
                     seed=self.seed)
 
     def read(self):
-        """ reads stored dataset and returns a list of Graph objects. 
+        """ Reads stored dataset and returns a list of Graph objects. 
 
-            assumes that the dataset file path already exists. (this is handled in super().__init__)
+            This a function that all subclasses of Dataset must implement, and is automatically called in the superclass __init__.
+
+            Assumes that the dataset file path already exists. (this is handled in super().__init__)
         """
         logging.info('reading Lorenz data from stored file')
 
@@ -315,18 +377,15 @@ class lorenzDataset(Dataset):
             t = data['t']
 
             # convert to Graph structure
-            if self.init_buffer_steps > 0 and self.return_buffer:
-                return [
-                    Graph(x=X[i], y=Y[i], t=t[i])
-                    for i in range(self.n_samples + self.init_buffer_steps)
-                ]
-            else:
-                return [
-                    Graph(x=X[i], y=Y[i], t=t[i]) for i in range(self.n_samples)
-                ]
+            return [
+                Graph(x=X[i], y=Y[i], t=t[i]) for i in range(self.n_samples)
+            ]
 
     def download(self):
-        """ generate and store Lorenz data. """
+        """ Generate and store Lorenz data. 
+        
+            This a function that all subclasses of Dataset must implement, and is automatically called in the superclass __init__.
+        """
         # Create the directory
         if not os.path.exists(os.path.dirname(self.path)):
             os.makedirs(os.path.dirname(self.path))
@@ -356,30 +415,36 @@ class lorenzDataset(Dataset):
             raise ValueError('invalid input for prediction_from argument')
 
     def generate_window_data(self):
+        """ Generate data samples containing input and target windows for the 
+            X1X2_window prediction paradigm. 
+        
+            Returns:
+                X: list of input data windows, each which is a 2d np array of shape (K, input_steps)
+                Y: list of target data windows, each which is a 2d np array of shape (K, output_steps)
+                t_X: list of input data window timestamps, each which is a 1d np array of size (input_steps)
+                t_Y: list of target data window timestamps, each which is a 1d np array of size (output_steps)
+        """
         logging.info('generating window data')
-        if self.rand_buffer:
-            # TODO: get rid of this parameter
-            raise NotImplementedError
-        else:
-            # equally spaced sets of samples
-            x_windows = [
-                (i * (self.min_buffer + self.input_steps + self.output_steps +
-                      self.output_delay),
-                 i * (self.min_buffer + self.input_steps + self.output_steps +
-                      self.output_delay) + self.input_steps)
-                for i in range(self.n_samples)
-            ]
-            y_windows = [
-                (i * (self.min_buffer + self.input_steps + self.output_steps +
-                      self.output_delay) + self.input_steps + self.output_delay,
-                 i * (self.min_buffer + self.input_steps + self.output_steps +
-                      self.output_delay) + self.input_steps +
-                 self.output_steps + self.output_delay)
-                for i in range(self.n_samples)
-            ]
+        # get indices for the datapoints in each sample
+        # x/y_windows are lists of lists; each sublist contains the indices for the datapoints in a single sample
+        # x_windows contains the indices for input graphs and y_windows contains the indices for target graphs
+        x_windows, y_windows = get_window_indices(
+            n_samples=self.n_samples, 
+            timestep_duration=self.timestep_duration, input_steps=self.input_steps, output_delay=self.output_delay, output_steps=self.output_steps, sample_buffer=self.sample_buffer)
 
         # generate some data
-        n_steps = y_windows[-1][1]
+
+        # compute the number of total "raw" steps in the simulation we need
+        if len(y_windows[-1]) > 0:
+            n_steps = y_windows[-1][-1] + 1 
+            # i.e. the last index in the last target data point
+            # add one to account for the zero-indexing
+        else:
+            # if there are no target data points, then we need to use the last index in the last input data point
+            # add one to account for the zero-indexing
+            n_steps = x_windows[-1][-1] + 1
+
+
         logging.debug('total steps: {}'.format(n_steps))
         if self.coupled:
             lorenz_buffered_df = lorenzToDF(
@@ -391,8 +456,6 @@ class lorenzDataset(Dataset):
                 coupled=self.coupled,
                 n_steps=n_steps,
                 time_resolution=self.time_resolution,
-                init_buffer_steps=self.init_buffer_steps,
-                return_buffer=self.return_buffer,
                 seed=self.seed)
         else:
             raise NotImplementedError
@@ -401,33 +464,32 @@ class lorenzDataset(Dataset):
         Y = []
         t_X = []
         t_Y = []
-        for i in range(self.n_samples):
-            x_window = x_windows[i]
-            y_window = y_windows[i]
 
-            # originally, the dataframe has time indexing the rows and node features on the
-            # columns; we want to reshape this so that we have rows indexed by node and
-            # columns to contain the node feature at every time step
+        for x_window, y_window in zip(x_windows, y_windows):
 
             # index and reshape dfs
-            x_df = lorenz_buffered_df.iloc[x_window[0]:x_window[1]]
+            # originally, the dataframe has time indexing the rows and node features on the columns; we want to reshape this so that we have rows indexed by node and columns to contain the node feature at every time step
+
+            x_df = lorenz_buffered_df.iloc[x_window]
             t_x = x_df.index
             x_df = x_df.T
             x_df = pd.concat([
                 x_df.iloc[:self.K].reset_index(drop=True),
                 x_df.iloc[self.K:].reset_index(drop=True)
-            ],
-                             axis=1)
+            ], axis=1)
 
-            # for y, we only want to predict the X1 values, not the X2 values
-            y_df = lorenz_buffered_df.iloc[y_window[0]:y_window[1], :self.K]
+            y_df = lorenz_buffered_df.iloc[y_window]
             t_y = y_df.index
             y_df = y_df.T
+            y_df = pd.concat([
+                y_df.iloc[:self.K].reset_index(drop=True),
+                y_df.iloc[self.K:].reset_index(drop=True)
+            ], axis=1)
 
             # rename columns
             x_df.columns = ['X1_{}'.format(t)
                             for t in t_x] + ['X2_{}'.format(t) for t in t_x]
-            y_df.columns = ['X1_{}'.format(t) for t in t_y]
+            y_df.columns = ['X1_{}'.format(t) for t in t_y] + ['X2_{}'.format(t) for t in t_y]
 
             # note that spektral graphs can't handle dataframes;
             # data must be in nparrays
@@ -439,6 +501,8 @@ class lorenzDataset(Dataset):
         return X, Y, t_X, t_Y
 
     def generate_paired_data(self):
+        # NOTE: WARNING, NOT MAINTAINED; DO NOT USE
+        raise NotImplementedError('not maintained; do not use')
         logging.info('generating paired data')
         if self.coupled:
             lorenz_buffered_df = lorenzToDF(
@@ -451,8 +515,6 @@ class lorenzDataset(Dataset):
                 n_steps=self.
                 n_samples,  # since 1 sample/window => n_samples total steps
                 time_resolution=self.time_resolution,
-                init_buffer_steps=self.init_buffer_steps,
-                return_buffer=self.return_buffer,
                 seed=self.seed)
 
         else:
@@ -470,6 +532,7 @@ class lorenzDataset(Dataset):
         return X, Y, t
 
     def compute_adjacency_matrix(self):
+        """ Generate adjacency matrix for the nodes on the circle graph. """
         if self.simple_adj:
             target_nodes = np.mod(np.arange(self.K) + 1, self.K)
             src_nodes = np.arange(self.K)
@@ -495,13 +558,14 @@ class lorenzDataset(Dataset):
         return a
 
     def get_mean_std(self):
-        """ Calculates the mean and stdev for 1) all X1 variables (includes both feature 
-            and target data), and 2) for all X2 variables
+        """ Calculates the mean and stdev for 1) all X1 variables (includes 
+            both feature and target data), and 2) for all X2 variables
         
             Returns:
                 4-tuple: X1_mean, X1_std, X2_mean, X2_std
         """
         # get one mean/stdev for all X1 variables (includes the x and y data), and one mean/stdev for all X2 variables
+        # TODO: normalze should only be on train input data
 
         start = datetime.now()
         all_x = np.concatenate([g.x for g in self])
@@ -534,6 +598,9 @@ class lorenzDataset(Dataset):
         return X1_mean, X1_std, X2_mean, X2_std
 
     def normalize(self, X1_mean, X1_std, X2_mean, X2_std):
+        """ Normalize the data in-place, given desired means and standard 
+            deviations for X1 and X2. 
+        """
         if self.predict_from == "X1X2_window":
             for g in self:
                 # separate X1 and X2 in g.x. recall that g.x has shape
@@ -619,6 +686,49 @@ class lorenzDataset(Dataset):
 
         return fig, (ax0, ax1)
 
+def get_window_indices(n_samples, timestep_duration, input_steps, output_delay, 
+                       output_steps, sample_buffer):
+    """ Compute indices for the datapoints in each sample. 
+    
+        Assumes a prediction paradigm of X1X2_window (i.e. we are predicting a 
+        rollout into the future, given a window of past data).
+    
+        Args:
+            n_samples (int): number of samples (windows) to generate data for.
+            timestep_duration (int): the sampling rate for data points from the 
+                raw Lorenz simulation data, i.e. the number of raw simulation 
+                data points between consecutive timestep samples, i.e. the 
+                slicing step size. all data points are separated by this value.
+            input_steps (int): number of timesteps in each input window.
+            output_delay (int): number of timesteps strictly between the end of 
+                the input window and the start of the output window.
+            output_steps (int): number of timesteps in each output window.
+            sample_buffer (int): number of timesteps strictly between the end 
+                of one full sample and the start of the next sample.
+
+        Returns:
+            x_windows (list of lists): each sublist contains the indices for 
+                the datapoints for the inputs of a single sample
+            y_windows (list of lists): each sublist contains the indices for 
+                the datapoints for the targets of a single sample
+            
+    """
+    x_windows = []
+    y_windows = []
+
+    for i in range(n_samples):
+        input_start = i * timestep_duration * (
+            input_steps + output_delay + output_steps + sample_buffer)
+        input_end = input_start + timestep_duration * (
+            input_steps - 1)
+        
+        output_start = input_end + timestep_duration * (output_delay + 1)
+        output_end = output_start + timestep_duration * (output_steps - 1)
+
+        x_windows.append(np.arange(input_start, input_end+1, timestep_duration))
+        y_windows.append(np.arange(output_start, output_end+1, timestep_duration))
+
+    return x_windows, y_windows
 
 def lorenzToDF(
         K=36,
@@ -627,32 +737,41 @@ def lorenzToDF(
         b=10,
         h=1,
         coupled=True,
-        n_steps=None,  # 30 * 100,
-        n_days=30,
+        n_steps=100,
         time_resolution=100,
-        init_buffer_steps=100,
-        return_buffer=True,
         seed=42):
-    """ generate a dataframe of data from the lorenz model. 
+    """ Generate a dataframe of data from the lorenz model. 
 
         Args: 
-            K (int): number of points on the circumference
-            F (float): forcing constant
-            c (float): time-scale ratio ?
-            b (float): spatial-scale ratio ?
-            h (float): coupling parameter ?
-            coupled (bool): whether to use the coupled 2-layer model or 
-                original 1-layer model
-            n_steps (int): number of timesteps to run the model for
-            n_days (int): number of days to run the model for. Only used of 
-                n_steps is None. 
-            time_resolution (float): number of timesteps per "day" in the simulation, i.e. inverse timestep for the ODE integration. 
+            K (int): number of nodes on the circumference of the Lorenz96 model
+            F (float): Lorenz96 forcing constant. (K=36 and F=8 corresponds to 
+                an error-doubling time of 2.1 days, similar to the real 
+                atmosphere)
+            c (float): Lorenz96 time-scale ratio ?
+            b (float): Lorenz96 spatial-scale ratio ?
+            h (float): Lorenz96 coupling parameter ?
+            coupled (bool): whether to use the coupled 2-layer Lorenz96 model 
+                or original 1-layer Lorenz96 model
+            n_steps (int): number of raw timesteps for which to run the ODE 
+                integration of the model (NOTE: this is distinct from the 
+                number of steps in the LorenzDataset/Wrapper object, which is 
+                sampled from this raw data. n_steps in this function would need 
+                to be computed given the specific parameters passed to the 
+                LorenzDataset/Wrapper object.)
+            time_resolution (int): the inverse of the delta t used in the 
+                Lorenz ODE integration (∆t = 1/time_resolution); the number of 
+                raw data points generated per time unit, equivalent to the 
+                number of data points generated per 5 days in the simulation.
             seed (int): for reproducibility 
+
+        Returns:
+            df (pandas DataFrame): a dataframe with shape (n_steps, 2*K). The 
+            rows are indexed by time; the first K columns contain the X1 data 
+            for each respective node, and the latter K columns contain the X2 
+            data for each respective node.
     """
-    if n_steps is None:
-        n_steps = n_days * time_resolution
     if coupled:
-        t_buffered_raw, X_buffered_raw, _, _, _ = run_Lorenz96_2coupled(
+        t, X, _, _, _ = run_Lorenz96_2coupled(
             K=K,
             F=F,
             c=c,
@@ -660,17 +779,15 @@ def lorenzToDF(
             h=h,
             n_steps=n_steps,
             resolution=time_resolution,
-            init_buffer_steps=init_buffer_steps,
-            return_buffer=return_buffer,
             seed=seed)
     else:
         raise NotImplementedError
 
-    df = pd.DataFrame(X_buffered_raw,
+    df = pd.DataFrame(X,
                       columns=['X1_{}'.format(i) for i in range(K)] +
                       ['X2_{}'.format(i) for i in range(K)],
-                      index=t_buffered_raw)
-    df.index.name = 'day'
+                      index=t)
+    df.index.name = 'time'
     return df
 
 
@@ -678,7 +795,9 @@ def lorenzToDF(
 # OG Lorenz96 model #
 #####################
 def lorenz96(X, t, K, F):
-    """ (from Prof. Kavassalis)
+    """ Functions defining a single update step in the Lorenz96 system.
+    
+        Copied from Prof. Kavassalis.
 
         Args: 
             X (float array, size K): array of X state values
@@ -723,22 +842,26 @@ def run_Lorenz96(K=36, F=8, number_of_days=30, nudge=True):
 
 
 def lorenz96_2coupled(X, t, K, F, c, b, h):
-    """ (from Prof. Kavassalis)
+    """ Functions defining a single update step in the coupled 2-layer Lorenz96 
+        system.
+
+        Copied from Prof. Kavassalis.
 
         Args: 
-            X (float array, size 2*K): array of current X and Y state values
+            X (float array, size 2*K): array of current X1 and X2 state values
             t: 
             K (int): number of points on the circumference
             F (float): forcing constant
             c (float): time-scale ratio ??
             b (float): spatial-scale ratio ??
             h (float): coupling parameter ??
+
+        Returns:
+            dX_dt (float array, size 2*K): array of the derivatives of the X1 and X2 state values at the given instant in time. 
         """
     dX_dt = np.zeros(K * 2)
-    # dX/dt is the first K elements
-    # dY/dt is the second K elements
-
-    ######## first##########
+    
+    ######## first ##########
     # boundary conditions
     dX_dt[0] = (X[1] - X[K - 2]) * X[K - 1] - X[0] - (h * c / b) * X[K] + F
     dX_dt[1] = (X[2] - X[K - 1]) * X[0] - X[1] - (h * c / b) * X[K + 1] + F
@@ -777,14 +900,37 @@ def run_Lorenz96_2coupled(
         h=1,
         n_steps=300,
         resolution=DEFAULT_TIME_RESOLUTION,  # 100
-        n_days=None,
-        init_buffer_steps=100,
-        return_buffer=True,
         seed=42):
-    """ (modified from Prof. Kavassalis) 
+    """ Run ODE integration over the coupled 2-layer Lorenz96 model.
     
-        note here that resolution = # of steps per day (e.g. 100 steps per 
-        day), not the delta t (which would be 0.01)
+        Modified from Prof. Kavassalis.
+    
+        Args:
+            K (int): number of nodes on the circumference of the Lorenz96 model
+            F (float): Lorenz96 forcing constant. (K=36 and F=8 corresponds to 
+                an error-doubling time of 2.1 days, similar to the real 
+                atmosphere)
+            c (float): Lorenz96 time-scale ratio ?
+            b (float): Lorenz96 spatial-scale ratio ?
+            h (float): Lorenz96 coupling parameter ?
+            n_steps (int): number of raw timesteps for which to run the ODE 
+                integration of the model (NOTE: this is distinct from the 
+                number of steps in the LorenzDataset/Wrapper object, which is 
+                sampled from this raw data. n_steps in this function would need 
+                to be computed given the specific parameters passed to the 
+                LorenzDataset/Wrapper object.)
+            resolution (int): the inverse of the delta t used in the 
+                Lorenz ODE integration (∆t = 1/time_resolution); the number of 
+                raw data points generated per time unit, equivalent to the 
+                number of data points generated per 5 days in the simulation.
+            seed (int): for reproducibility 
+
+        Returns:
+            t (float array): array of time points
+            X (float array): array of state values at each time point
+            F (float): forcing constant
+            K (int): number of points on the circumference
+            n_steps (int): number of time steps
     """
     random.seed(seed)
 
@@ -795,20 +941,15 @@ def run_Lorenz96_2coupled(
     X0[random.randint(0, K) -
        1] = X0[random.randint(0, K) - 1] + random.uniform(0, .01)
 
-    if n_days is None:
-        n_days = n_steps / resolution
-    buffer_days = init_buffer_steps / resolution
-    t_buffered = np.arange(0.0, buffer_days + n_days, 1 / resolution)
+    simulation_duration = n_steps / resolution # number of time units
+    t = np.arange(
+        0.0, simulation_duration, 1 / resolution) # indices of all time steps
 
     logging.info('starting integration')
     X = odeint(lorenz96_2coupled,
                X0,
-               t_buffered,
+               t,
                args=(K, F, c, b, h),
                ixpr=True)
 
-    if return_buffer:
-        return t_buffered, X, F, K, n_days
-    else:
-        return t_buffered[init_buffer_steps:], X[
-            init_buffer_steps:], F, K, n_days
+    return t, X, F, K, n_steps

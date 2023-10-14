@@ -39,7 +39,7 @@ def draw_jraph_graph_structure(jraph_graph: jraph.GraphsTuple) -> None:
 
 
 # time series visualizations
-def plot_time_series_for_node(graph_tuple_lists, node):
+def plot_time_series_for_node(graph_tuple_dict, node):
     fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(20, 8))
     fig.suptitle("sampled time series after reshaping", size=28)
     ax0.set_title("X1 (i.e. atmospheric variable) for node {}".format(node),
@@ -49,21 +49,21 @@ def plot_time_series_for_node(graph_tuple_lists, node):
     plt.xlabel('time (days)', size=16)
 
     # plot train data
-    ax0.plot(jnp.array([g.nodes[node][0] for g in graph_tuple_lists['train']]),
+    ax0.plot(jnp.array([g.nodes[node][0] for g in graph_tuple_dict['train']]),
              label='train')
-    ax1.plot(jnp.array([g.nodes[node][1] for g in graph_tuple_lists['train']]),
+    ax1.plot(jnp.array([g.nodes[node][1] for g in graph_tuple_dict['train']]),
              label='train')
 
     # plot val data
     ax0.plot(range(
-        len(graph_tuple_lists['train']),
-        len(graph_tuple_lists['train']) + len(graph_tuple_lists['val'])),
-             jnp.array([g.nodes[node][0] for g in graph_tuple_lists['val']]),
+        len(graph_tuple_dict['train']),
+        len(graph_tuple_dict['train']) + len(graph_tuple_dict['val'])),
+             jnp.array([g.nodes[node][0] for g in graph_tuple_dict['val']]),
              label='val')
     ax1.plot(range(
-        len(graph_tuple_lists['train']),
-        len(graph_tuple_lists['train']) + len(graph_tuple_lists['val'])),
-             jnp.array([g.nodes[node][1] for g in graph_tuple_lists['val']]),
+        len(graph_tuple_dict['train']),
+        len(graph_tuple_dict['train']) + len(graph_tuple_dict['val'])),
+             jnp.array([g.nodes[node][1] for g in graph_tuple_dict['val']]),
              label='val')
 
     ax0.legend()
