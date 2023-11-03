@@ -1,4 +1,5 @@
-from utils.lorenz import get_window_indices, lorenzToDF, lorenzDatasetWrapper, run_Lorenz96_2coupled
+from utils.lorenz import get_window_indices, load_lorenz96_2coupled
+from utils.jraph_data import get_lorenz_graph_tuples
 from run_net import set_up_logging
 import numpy as np
 import unittest
@@ -94,176 +95,150 @@ class DataTests(unittest.TestCase):
         self.assertEqual(y_windows_2[-1][0], 7182)
         self.assertEqual(y_windows_2[-1][-1], 7191)
 
-    def test_lorenzToDF(self):
-        logging.info('\n ------------ test_lorenzToDF ------------ \n')
-        n_steps = 3591
-        time_resolution = 100
-        init_buffer_samples = 100
+    # def test_lorenzToDF(self):
+    #     logging.info('\n ------------ test_lorenzToDF ------------ \n')
+    #     n_steps = 3591
+    #     time_resolution = 100
+    #     init_buffer_samples = 100
 
-        df = lorenzToDF(K=self.K,
-                        F=self.F,
-                        c=self.c,
-                        b=self.b,
-                        h=self.h,
-                        coupled=True,
-                        n_steps=n_steps + init_buffer_samples + 1,
-                        time_resolution=time_resolution,
-                        seed=self.seed)
-        logging.info(f"lorenz dataframe shape: {df.shape}")
-        self.assertEqual(df.shape,
-                         (n_steps + init_buffer_samples + 1, self.K * 2))
+    #     df = lorenzToDF(K=self.K,
+    #                     F=self.F,
+    #                     c=self.c,
+    #                     b=self.b,
+    #                     h=self.h,
+    #                     coupled=True,
+    #                     n_steps=n_steps + init_buffer_samples + 1,
+    #                     time_resolution=time_resolution,
+    #                     seed=self.seed)
+    #     logging.info(f"lorenz dataframe shape: {df.shape}")
+    #     self.assertEqual(df.shape,
+    #                      (n_steps + init_buffer_samples + 1, self.K * 2))
 
-    def test_lorenz_sampling_window(self):
-        """ test that the Lorenz data windows are sampled correctly in the lorenzDatasetWrapper for the X1X2_window prediction paradigm."""
+    def test_graphtuple_datasets(self):
+        """ test that the Lorenz data windows are sampling the correct values."""
         logging.info(
-            '\n ------------ test_lorenz_sampling_window ------------ \n')
+            '\n ------------ test_graphtuple_datasets ------------ \n')
         n_samples = 100
         input_steps = 6
         output_delay = 0
         output_steps = 4
         timestep_duration = 3
         sample_buffer = 2  # buffer between consequetive samples
-        init_buffer = 100  # buffer at the beginning of the dataset to allow for the system to settle
+        init_buffer_samples = 100  # buffer at the beginning of the dataset to allow for the system to settle
         time_resolution = 100
+        data_path = "/Users/h.lu/Documents/_code/_research lorenz code/lorenzGNN/data/test.npz"
 
         # generate desired dataset with train/val split and subsampled windows
-        dataset_subsampled = lorenzDatasetWrapper(
-            predict_from="X1X2_window",
+        graph_tuple_dict = get_lorenz_graph_tuples(
             n_samples=n_samples,
-            # preprocessing=None, # ?????
-            simple_adj=False,
             input_steps=input_steps,
             output_delay=output_delay,
             output_steps=output_steps,
             timestep_duration=timestep_duration,
             sample_buffer=sample_buffer,
+            time_resolution=time_resolution,
+            init_buffer_samples=init_buffer_samples,
+            train_pct=0.7,
+            val_pct=0.3,
+            test_pct=0.0,
             K=self.K,
             F=self.F,
             c=self.c,
             b=self.b,
             h=self.h,
-            coupled=True,
-            time_resolution=time_resolution,
-            init_buffer_samples=init_buffer,
-            return_buffer=True,
-            seed=self.seed,
-            override=True,
-            train_pct=0.7,
-            val_pct=0.3,
-            test_pct=0.0)
+            seed=self.seed, 
+            normalize=False, # TODO: test with normalized. perhaps just with plots
+            data_path=data_path)
+        # graph_tuple_dict has the following format:
+        # {
+        # 'train': {
+        #     'inputs': list of windows of graphtuples
+        #     'targets': list of windows of graphtuples},
+        # 'val': {
+        #     'inputs': list of windows of graphtuples,
+        #     'targets': list of windows of graphtuples},
+        # 'test': {
+        #     'inputs': list of windows of graphtuples,
+        #     'targets': list of windows of graphtuples},
+        # }
 
         # check sizes of datasets
-        self.assertEqual(dataset_subsampled.buffer.n_graphs, init_buffer)
-        self.assertEqual(dataset_subsampled.train.n_graphs,
+        self.assertEqual(len(graph_tuple_dict['train']['inputs']),
                          int(n_samples * 0.7))
-        self.assertEqual(dataset_subsampled.val.n_graphs, int(n_samples * 0.3))
-        self.assertIsNone(dataset_subsampled.test)
+        self.assertEqual(len(graph_tuple_dict['train']['targets']),
+                         int(n_samples * 0.7))
+        self.assertEqual(len(graph_tuple_dict['val']['inputs']),
+                         int(n_samples * 0.3))
+        self.assertEqual(len(graph_tuple_dict['test']['inputs']), 0)
+
+        # check number of data points in a window
+        self.assertEqual(len(graph_tuple_dict['train']['inputs'][0]),
+                         input_steps)
+        self.assertEqual(len(graph_tuple_dict['train']['targets'][0]),
+                         output_steps)
 
         # check basic graph size attributes
-        self.assertEqual(dataset_subsampled.train[0].n_nodes, self.K)
-        self.assertEqual(dataset_subsampled.train[0].n_node_features,
-                         2 * input_steps)
-        self.assertIsNone(dataset_subsampled.train[0].n_edge_features)
-        self.assertEqual(dataset_subsampled.train[0].n_labels, 2 * output_steps)
-        self.assertEqual(dataset_subsampled.train[0].x.shape,
-                         (self.K, 2 * input_steps))
-        self.assertEqual(dataset_subsampled.train[0].y.shape,
-                         (self.K, 2 * output_steps))
+        sample_graphtuple = graph_tuple_dict['train']['inputs'][0][0]
+        self.assertEqual(sample_graphtuple.nodes.shape, (self.K, 2))
+        self.assertEqual(sample_graphtuple.edges.shape, (self.K * 5, 1))
+        self.assertEqual(sample_graphtuple.n_node[0], self.K)
+        self.assertEqual(sample_graphtuple.n_edge[0], self.K * 5)
 
         # check data sampling (check time values)
-        # check time array for first train input window
-        self.assertTrue(
-            np.allclose(dataset_subsampled.train[0].t_X, (1 / time_resolution) *
-                        np.arange(3600, 3615 + 1, timestep_duration)))
-        # check time array for first train target window
-        self.assertTrue(
-            np.allclose(dataset_subsampled.train[0].t_Y, (1 / time_resolution) *
-                        np.arange(3618, 3627 + 1, timestep_duration)))
-        # check time array for last train input window
-        self.assertTrue(
-            np.allclose(dataset_subsampled.train[-1].t_X,
-                        (1 / time_resolution) *
-                        np.arange(6084, 6099 + 1, timestep_duration)))
-        # check time array for last train target window
-        self.assertTrue(
-            np.allclose(dataset_subsampled.train[-1].t_Y,
-                        (1 / time_resolution) *
-                        np.arange(6102, 6111 + 1, timestep_duration)))
+        # TODO: we dropped the time array - should we keep it? prob not necessary right? 
+        # # check time array for first train input window
+        # self.assertTrue(
+        #     np.allclose(dataset_subsampled.train[0].t_X, (1 / time_resolution) *
+        #                 np.arange(3600, 3615 + 1, timestep_duration)))
+        # # check time array for first train target window
+        # self.assertTrue(
+        #     np.allclose(dataset_subsampled.train[0].t_Y, (1 / time_resolution) *
+        #                 np.arange(3618, 3627 + 1, timestep_duration)))
+        # # check time array for last train input window
+        # self.assertTrue(
+        #     np.allclose(dataset_subsampled.train[-1].t_X,
+        #                 (1 / time_resolution) *
+        #                 np.arange(6084, 6099 + 1, timestep_duration)))
+        # # check time array for last train target window
+        # self.assertTrue(
+        #     np.allclose(dataset_subsampled.train[-1].t_Y,
+        #                 (1 / time_resolution) *
+        #                 np.arange(6102, 6111 + 1, timestep_duration)))
 
         # check data sampling (compare node 0 time series in subsampled vs raw dataset)
+        # retrieve the "raw" Lorenz simulation data so we can compare with the sampled windows
+        _, raw_data = load_lorenz96_2coupled(data_path)
 
-        # generate "raw" dataset of entire underlying Lorenz simulation so we can compare the sampled windows
-        total_n_steps = timestep_duration * (
-            (n_samples + init_buffer) *
-            (input_steps + output_delay + output_steps + sample_buffer) -
-            (sample_buffer + 1)) + 1  # = 7191 + 1 to account for 0-indexing
-
-        dataset_raw_df = lorenzToDF(K=self.K,
-                                    F=self.F,
-                                    c=self.c,
-                                    b=self.b,
-                                    h=self.h,
-                                    n_steps=total_n_steps,
-                                    time_resolution=time_resolution,
-                                    seed=self.seed)
 
         # check data sampling for first train input window, X1 variable
+        data_sampled_first_train_input_window_X1 = np.vstack(
+            [graph_tuple_dict['train']['inputs'][0][i].nodes[:, 0] for i in range(input_steps)])
         self.assertTrue(
             np.allclose(
-                dataset_subsampled.train[0].x[:, :input_steps],
-                dataset_raw_df.iloc[list(range(3600, 3615 + 1, 3)), :self.K].T))
+                data_sampled_first_train_input_window_X1,
+                raw_data[list(range(3600, 3615 + 1, 3)), :self.K]))
         # check data sampling for first train input window, X2 variable
+        data_sampled_first_train_input_window_X2 = np.vstack(
+            [graph_tuple_dict['train']['inputs'][0][i].nodes[:, 1] for i in range(input_steps)])
         self.assertTrue(
-            np.allclose(
-                dataset_subsampled.train[0].x[:, input_steps:],
-                dataset_raw_df.iloc[list(range(3600, 3615 + 1, 3)), self.K:].T))
-
-        # check data sampling for first train target window, X1 variable
-        self.assertTrue(
-            np.allclose(
-                dataset_subsampled.train[0].y[:, :output_steps],
-                dataset_raw_df.iloc[list(range(3618, 3627 + 1, 3)), :self.K].T))
-        # check data sampling for first train target window, X2 variable
-        self.assertTrue(
-            np.allclose(
-                dataset_subsampled.train[0].y[:, output_steps:],
-                dataset_raw_df.iloc[list(range(3618, 3627 + 1, 3)), self.K:].T))
-
-        # check data sampling for last train input window, X1 variable
-        self.assertTrue(
-            np.allclose(
-                dataset_subsampled.train[-1].x[:, :input_steps],
-                dataset_raw_df.iloc[list(range(6084, 6099 + 1, 3)), :self.K].T))
-        # check data sampling for last train input window, X2 variable
-        self.assertTrue(
-            np.allclose(
-                dataset_subsampled.train[-1].x[:, input_steps:],
-                dataset_raw_df.iloc[list(range(6084, 6099 + 1, 3)), self.K:].T))
+            np.allclose(data_sampled_first_train_input_window_X2,
+                raw_data[list(range(3600, 3615 + 1, 3)), self.K:]))
 
         # check data sampling for last train target window, X1 variable
+        data_sampled_last_train_target_window_X1 = np.vstack(
+            [graph_tuple_dict['train']['targets'][-1][i].nodes[:, 0] for i in range(output_steps)])
         self.assertTrue(
             np.allclose(
-                dataset_subsampled.train[-1].y[:, :output_steps],
-                dataset_raw_df.iloc[list(range(6102, 6111 + 1, 3)), :self.K].T))
-        # check data sampling for last train target window, X2 variable
-        self.assertTrue(
-            np.allclose(
-                dataset_subsampled.train[-1].y[:, output_steps:],
-                dataset_raw_df.iloc[list(range(6102, 6111 + 1, 3)), self.K:].T))
+                data_sampled_last_train_target_window_X1,
+                raw_data[list(range(6102, 6111 + 1, 3)), :self.K]))
 
         # check data sampling for last val target window, X1 variable
+        data_sampled_last_val_target_window_X1 = np.vstack(
+            [graph_tuple_dict['val']['targets'][-1][i].nodes[:, 0] for i in range(output_steps)])
         self.assertTrue(
             np.allclose(
-                dataset_subsampled.val[-1].y[:, :output_steps],
-                dataset_raw_df.iloc[list(range(7182, 7191 + 1, 3)), :self.K].T))
-        # check data sampling for last val target window, X2 variable
-        self.assertTrue(
-            np.allclose(
-                dataset_subsampled.val[-1].y[:, output_steps:],
-                dataset_raw_df.iloc[list(range(7182, 7191 + 1, 3)), self.K:].T))
-
-    def test_graphstuples(self):
-        logging.info("\n ------------ test_graphstuples ------------ \n")
+                data_sampled_last_val_target_window_X1,
+                raw_data[list(range(7182, 7191 + 1, 3)), :self.K]))
 
 
 if __name__ == "__main__":

@@ -1,17 +1,17 @@
-from utils.lorenz import DATA_DIRECTORY_PATH, run_download_lorenz96_2coupled, load_lorenz96_2coupled, get_window_indices, normalize_lorenz96_2coupled
+from utils.lorenz import lorenzDatasetWrapper
 
 import jraph
 import jax
 import jax.numpy as jnp
 import networkx as nx
-import numpy as np 
-import json 
 
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
 import logging
 import pdb
 
-def get_lorenz_graph_tuples(n_samples,
+
+def get_lorenz_graph_tuples(predict_from,
+                            n_samples,
                             input_steps,
                             output_delay,
                             output_steps,
@@ -19,6 +19,7 @@ def get_lorenz_graph_tuples(n_samples,
                             sample_buffer,
                             time_resolution,
                             init_buffer_samples,
+                            return_buffer,
                             train_pct,
                             val_pct,
                             test_pct,
@@ -27,12 +28,16 @@ def get_lorenz_graph_tuples(n_samples,
                             c=10,
                             b=10,
                             h=1,
+                            coupled=True,
                             seed=42,
-                            normalize=False,
-                            data_path=None):
+                            override=False):
     """ Generated data using Lorenz96 and splits data into train/val/test. 
 
         Args: 
+            predict_from (str): prediction paradigm. Options are "X1X2_window", 
+                in which the target X1 and X2 states are predicted from the 
+                input X1 and X2 states; and "X2", in which the target X1 state 
+                is predicted from the input X2 state.
             n_samples (int): number of samples (windows) to generate data for.
             input_steps (int): number of timesteps in each input window.
             output_delay (int): number of timesteps strictly between the end of 
@@ -70,122 +75,65 @@ def get_lorenz_graph_tuples(n_samples,
             coupled (bool): whether to use the coupled 2-layer Lorenz96 model 
                 or original 1-layer Lorenz96 model
             seed (int): for reproducibility 
-            normalize (bool): whether or not to normalize the data.
-            data_path (str): optional file path. if None, will iterate over all existing simulation data to find a valid dataset with compatible parameters, or generate new simulation data if it cannot find any (using a default generated data path). if a path is given, then the simulation data will be checked to see if it exists is compatible; if it doesn't exist, it will generate new simulation data at that path; if it exists but was incompatible, an error will be raised. 
+            override (bool): whether or not to regenerate data that was 
+                already generated previously
 
         Output:
             returns a dict with the keys "train"/"val"/"test", each corresponding to a list. Each element of the list contains a data sample, consisting of another dictionary containing "input_graphs" and "target_graphs" as keys; the values are lists of jraph.GraphsTuple objects, corresponding to the input graphs and target graphs datapoints in the sample. 
     """
     logging.debug('Generating graph tuples')
-    assert abs(train_pct + val_pct + test_pct - 1.0) < 0.001
-    # use error term due to float errors
+    # i'm just going to pull the data out of a lorenz spektral dataset
+    # this is computationally inefficient but convenient code-wise so I don't
+    # have to rewrite all the normalization functions and stuff
+    dataset = lorenzDatasetWrapper(predict_from=predict_from,
+                                   n_samples=n_samples,
+                                   input_steps=input_steps,
+                                   output_delay=output_delay,
+                                   output_steps=output_steps,
+                                   timestep_duration=timestep_duration,
+                                   sample_buffer=sample_buffer,
+                                   time_resolution=time_resolution,
+                                   init_buffer_samples=init_buffer_samples,
+                                   return_buffer=return_buffer,
+                                   train_pct=train_pct,
+                                   val_pct=val_pct,
+                                   test_pct=test_pct,
+                                   K=K,
+                                   F=F,
+                                   c=c,
+                                   b=b,
+                                   h=h,
+                                   coupled=coupled,
+                                   seed=seed,
+                                   override=override)
+    # note that we don't care about the preprocessing or simple_adj arguments 
+    # because we're not using the adjacency matrix generated in the 
+    # lorenzDatasetWrapper class
+    dataset.normalize()
 
+    graph_tuple_dict = {'train': {'inputs': [], 'targets': []}, 
+                             'val': {'inputs': [], 'targets': []}, 
+                             'test': {'inputs': [], 'targets': []}}
 
-    # check if raw Lorenz data exists for the given params; otherwise generate it 
-    # check params of existing data by iterating over everything in the json data directory
-    with open(DATA_DIRECTORY_PATH, 'r') as f:
-        data_directory = json.load(f)
+    for g in dataset.train:
+        # g.x has shape 36 x 2
+        input_graph_tuple = timestep_to_graphstuple(g.x, K=K)
+        output_graph_tuple = timestep_to_graphstuple(g.y , K=K)
+        graph_tuple_dict['train']['inputs'].append(input_graph_tuple)
+        graph_tuple_dict['train']['targets'].append(output_graph_tuple)
 
-    # compute the number of total "raw" steps in the simulation we need
-    # TODO test if this section is correct 
-    total_samples = n_samples + init_buffer_samples
+    if dataset.val is not None:
+        # TODO pick up here
+        for g in dataset.val:
+            # g.x has shape 36 x 2
+            graph_tuple = timestep_to_graphstuple(g.x, K=K)
+            graph_tuple_dict['val'].append(graph_tuple)
 
-    all_input_window_indices, all_target_window_indices = get_window_indices(
-            n_samples=total_samples, 
-            timestep_duration=timestep_duration, input_steps=input_steps, output_delay=output_delay, output_steps=output_steps, sample_buffer=sample_buffer)
-    # note that window indices include buffer zone 
-    
-    if len(all_target_window_indices[-1]) > 0:
-        simulation_steps_needed = int(all_target_window_indices[-1][-1] + 1 )
-        # i.e. the last index in the last target data point
-        # add one to account for the zero-indexing
-    else:
-        # if there are no target data points, then we need to use the last index in the last input data point
-        # add one to account for the zero-indexing
-        simulation_steps_needed = int(all_input_window_indices[-1][-1] + 1)
-
-    valid_existing_simulation = False 
-    for entry in data_directory:
-        # check if the params match 
-        if (entry["K"] == K) and (entry["F"] == F) and (entry["c"] == c) and (entry["b"] == b) and (entry["h"] == h) and (entry["n_steps"] >= simulation_steps_needed) and (entry["resolution"] == time_resolution) and (entry["seed"] == seed):
-            # match; get the path to the data so we can load it later 
-            valid_existing_simulation = True 
-            lorenz_data_path = entry["fname"]
-            break 
-
-    # otherwise, generate Lorenz data 
-    if not valid_existing_simulation:
-        lorenz_data_path = "/Users/h.lu/Documents/_code/_research lorenz code/lorenzGNN/data/test.npz" # TODO decide what path to save it to 
-        run_download_lorenz96_2coupled(
-            fname=lorenz_data_path, 
-            K=K,
-            F=F,
-            c=c,
-            b=b,
-            h=h,
-            n_steps=simulation_steps_needed,
-            resolution=time_resolution,
-            seed=seed)
-
-    # load raw Lorenz data 
-    t, X = load_lorenz96_2coupled(lorenz_data_path)
-    # t has shape (simulation_steps_needed,)
-    # X has shape (simulation_steps_needed, K*2)
-
-    # TODO: NORMALIZE THE DATA
-    # PICK UP HERE 
-
-    # iterate over windows of input/target data and convert into a series of GraphTuple objects 
-    # note that the indices include the buffer section, so we first drop that
-    all_input_window_indices = all_input_window_indices[init_buffer_samples:]
-    all_target_window_indices = all_target_window_indices[init_buffer_samples:]
-    
-    input_windows = []
-    target_windows = []
-    for input_window_indices, target_window_indices in zip(all_input_window_indices, all_target_window_indices):
-        # do we actually want or need to keep the t data? 
-
-        # grab the window of data 
-        input_X = X[input_window_indices] # shape (input_steps, K*2)
-        target_X = X[target_window_indices] # shape (output_steps, K*2)
-
-        # convert features into a GraphTuple structure 
-        input_graphtuples = []
-        target_graphtuples = []
-        for step in range(input_steps):
-            # take timeslice in the window and resize to have shape (K, num_fts)
-            data = np.vstack((input_X[step, :K], input_X[step, K:])).T
-            graphtuple = timestep_to_graphstuple(data, K)
-            input_graphtuples.append(graphtuple)
-
-        for step in range(output_steps):
-            # take timeslice in the window and resize to have shape (K, num_fts)
-            data = np.vstack((target_X[step, :K], target_X[step, K:])).T
-            graphtuple = timestep_to_graphstuple(data, K)
-            target_graphtuples.append(graphtuple)
-
-        input_windows.append(input_graphtuples)
-        target_windows.append(target_graphtuples)
-
-    # partition series of windows into train/val/test 
-    train_upper_index = round(train_pct * n_samples)
-    val_upper_index = round((train_pct + val_pct) * n_samples)
-
-    graph_tuple_dict = {
-        'train': {
-            'inputs': input_windows[:train_upper_index], 
-            'targets': target_windows[:train_upper_index]}, 
-        'val': {
-            'inputs': input_windows[train_upper_index:val_upper_index], 
-            'targets': target_windows[train_upper_index:val_upper_index]}, 
-        'test': {
-            'inputs': input_windows[val_upper_index:], 
-            'targets': target_windows[val_upper_index:]
-        }}
-    
-    # normalize data 
-    if normalize:
-        graph_tuple_dict = normalize_lorenz96_2coupled(graph_tuple_dict)
+    if dataset.test is not None:
+        for g in dataset.test:
+            # g.x has shape 36 x 2
+            graph_tuple = timestep_to_graphstuple(g.x, K=K)
+            graph_tuple_dict['test'].append(graph_tuple)
 
     return graph_tuple_dict
 
@@ -236,6 +184,43 @@ def print_graph_fts(graph: jraph.GraphsTuple):
     print(f'Edge features shape: {graph.edges.shape}')
     print(f'Global features shape: {graph.globals.shape}')
 
+
+# def get_data_windows(graph_tuple_list, n_rollout_steps, timestep_duration: int):
+#     """ Get inputs and targets from a graph_tuple containing time series data
+    
+#         Args: 
+#             graph_tuple_list: dist of lists of GraphsTuple objects
+#             n_rollout_steps (int): number of steps for rollout output
+
+#         Returns:
+#             inputs, 1D list of GraphTuples, with length 
+#                 (datapoints - n_rollout_steps * timestep_duration)
+#             targets, 2D list of GraphTuples, with shape 
+#                 (datapoints - n_rollout_steps * timestep_duration, n_rollout_steps)
+#     """
+#     inputs = []
+#     targets = []
+#     # TODO: maybe we should convert these to a pd dataframe?
+#     # this also seems quite space-inefficient
+
+#     orig_timesteps = len(graph_tuple_list)
+#     n_timesteps = orig_timesteps - n_rollout_steps * timestep_duration
+
+#     # print(orig_timesteps, n_timesteps)
+#     for i in range(n_timesteps):
+#         input_graph = graph_tuple_list[i]
+#         target_graphs = graph_tuple_list[i + timestep_duration:i +
+#                                          (1 + n_rollout_steps) *
+#                                          timestep_duration:timestep_duration]
+#         # print(type(input_graph))
+#         # print(type(target_graphs))
+#         inputs.append(input_graph)
+#         targets.append(target_graphs)
+
+#     # return np.concatenate(inputs, axis=0, dtype=object), np.concatenate(targets, axis=0, dtype=object)
+#     # return np.vstack(inputs), np.vstack(targets)
+#     # print('len(inputs), len(targets)', len(inputs), len(targets))
+#     return inputs, targets
 
 
 def convert_jraph_to_networkx_graph(jraph_graph: jraph.GraphsTuple) -> nx.Graph:

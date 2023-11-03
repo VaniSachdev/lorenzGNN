@@ -33,12 +33,12 @@ def one_step_loss(state: train_state.TrainState,
         Also returns predicted nodes.
     """
     pred_graph = state.apply_fn(state.params, input_graph) 
-    preds = pred_graph.nodes
-    targets = target_graph.nodes
+    X1_preds = pred_graph.nodes[:, 0] # nodes has shape (36, 2)
+    X1_targets = target_graph.nodes[:, 0]
 
     # MSE loss
-    loss = MSE(targets, preds)
-    return loss, preds
+    loss = MSE(X1_targets, X1_preds)
+    return loss, X1_preds
 
 def rollout_loss(state: train_state.TrainState, 
                   input_graph: jraph.GraphsTuple,
@@ -60,11 +60,11 @@ def rollout_loss(state: train_state.TrainState,
         pred_graph = state.apply_fn(state.params, curr_input_graph) 
         curr_input_graph = pred_graph
 
-        preds = pred_graph.nodes
-        targets = target_graphs[i].nodes
-        loss = MSE(targets, preds)
+        X1_preds = pred_graph.nodes[:, 0]
+        X1_targets = target_graphs[i].nodes[:, 0]
+        loss = MSE(X1_targets, X1_preds)
 
-        pred_nodes.append(preds) # Side-effects aren't allowed in JAX-transformed functions, and appending to a list is a side effect ??
+        pred_nodes.append(X1_preds) # Side-effects aren't allowed in JAX-transformed functions, and appending to a list is a side effect ??
         total_loss += loss
 
     avg_loss = total_loss / n_steps
@@ -240,3 +240,10 @@ def train_and_evaluate(net, data_dict_lists: Dict[str, List[Dict[str, Any]]], ep
 
     return state
 
+# TODO create these
+# currently these are placeholders so that imports in other files don't fail
+def train():
+    pass
+
+def evaluate():
+    pass

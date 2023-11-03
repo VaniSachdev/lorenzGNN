@@ -5,7 +5,7 @@
 
 # imports
 import os
-
+import json 
 import numpy as np
 import pandas as pd
 import random
@@ -16,12 +16,15 @@ from spektral.data import Graph
 from spektral.data.dataset import Dataset
 from spektral.datasets.utils import DATASET_FOLDER
 from spektral.utils import gcn_filter
+import jraph 
+import jax.numpy as jnp
 
 from datetime import datetime
 import logging
 import pdb
 
 DEFAULT_TIME_RESOLUTION = 100
+DATA_DIRECTORY_PATH = "/Users/h.lu/Documents/_code/_research lorenz code/lorenzGNN/data/data_directory.json"
 
 
 # wrapper for the lorenzDataset with train/test splitting and normalization bundled in
@@ -725,8 +728,8 @@ def get_window_indices(n_samples, timestep_duration, input_steps, output_delay,
         output_start = input_end + timestep_duration * (output_delay + 1)
         output_end = output_start + timestep_duration * (output_steps - 1)
 
-        x_windows.append(np.arange(input_start, input_end+1, timestep_duration))
-        y_windows.append(np.arange(output_start, output_end+1, timestep_duration))
+        x_windows.append(np.arange(input_start, input_end+1, timestep_duration, dtype=int))
+        y_windows.append(np.arange(output_start, output_end+1, timestep_duration, dtype=int))
 
     return x_windows, y_windows
 
@@ -771,7 +774,7 @@ def lorenzToDF(
             data for each respective node.
     """
     if coupled:
-        t, X, _, _, _ = run_Lorenz96_2coupled(
+        t, X, _, _, _ = run_lorenz96_2coupled(
             K=K,
             F=F,
             c=c,
@@ -819,7 +822,7 @@ def lorenz96(X, t, K, F):
     return dX_dt
 
 
-def run_Lorenz96(K=36, F=8, number_of_days=30, nudge=True):
+def run_lorenz96(K=36, F=8, number_of_days=30, nudge=True):
     """ (from Prof. Kavassalis) """
     X0 = F * np.ones(K)  # Initial state (equilibrium)
     if nudge == True:
@@ -892,7 +895,7 @@ def lorenz96_2coupled(X, t, K, F, c, b, h):
     return dX_dt
 
 
-def run_Lorenz96_2coupled(
+def run_lorenz96_2coupled(
         K=36,
         F=8,
         c=10,
@@ -953,3 +956,142 @@ def run_Lorenz96_2coupled(
                ixpr=True)
 
     return t, X, F, K, n_steps
+
+def run_download_lorenz96_2coupled(
+        fname, 
+        K=36,
+        F=8,
+        c=10,
+        b=10,
+        h=1,
+        n_steps=300,
+        resolution=DEFAULT_TIME_RESOLUTION,  # 100
+        seed=42):
+    """ Run ODE integration over the coupled 2-layer Lorenz96 model and save 
+        the data to a .npz file. 
+    
+        Args: 
+            fname (str): path and name of file to which the data will be saved.
+            K (int): number of nodes on the circumference of the Lorenz96 model
+            F (float): Lorenz96 forcing constant. (K=36 and F=8 corresponds to 
+                an error-doubling time of 2.1 days, similar to the real 
+                atmosphere)
+            c (float): Lorenz96 time-scale ratio ?
+            b (float): Lorenz96 spatial-scale ratio ?
+            h (float): Lorenz96 coupling parameter ?
+            n_steps (int): number of raw timesteps for which to run the ODE 
+                integration of the model (NOTE: this is distinct from the 
+                number of steps in the LorenzDataset/Wrapper object, which is 
+                sampled from this raw data. n_steps in this function would need 
+                to be computed given the specific parameters passed to the 
+                LorenzDataset/Wrapper object.)
+            resolution (int): the inverse of the delta t used in the 
+                Lorenz ODE integration (∆t = 1/time_resolution); the number of 
+                raw data points generated per time unit, equivalent to the 
+                number of data points generated per 5 days in the simulation.
+            seed (int): for reproducibility 
+
+        Output:
+            an .npz file containing t, the array of time points, and X, the array of state values at each time point. The parameters for the simulation run will also be saved to a data directory for reference.
+
+            The data can be accessed similar to a dictionary, as follows: 
+                data = np.load(fname, allow_pickle=True)
+                t = data['t'] # array of time points
+                X = data['X'] # array of state values at each time point, shape (?, ?)
+    """
+    # generate data
+    t, X, _, _, _ = run_lorenz96_2coupled(K=K, F=F, c=c, b=b, h=h, n_steps=n_steps, resolution=resolution, seed=seed)
+
+    # save data 
+    np.savez(fname, t=t, X=X)
+
+    # save params to the data directory
+    # this is a json that contains the parameters and the file name, so that they can be logged and looked up 
+    # the json consists of a list of dictionaries containing the params and file name
+
+    # setup directory for data, if it doesn't exist 
+    if not os.path.exists(DATA_DIRECTORY_PATH):
+        os.makedirs(os.path.dirname(DATA_DIRECTORY_PATH), exist_ok=True)
+        data_directory = []
+    else: 
+        # load json 
+        with open(DATA_DIRECTORY_PATH, "r") as f:
+            data_directory = json.load(f)
+
+    # log the information for this data simulation 
+    params = {
+        "fname": fname, 
+        "K": K,
+        "F": F,
+        "c": c,
+        "b": b,
+        "h": h,
+        "n_steps": n_steps,
+        "resolution": resolution,
+        "seed": seed,
+    }
+    data_directory.append(params)
+
+    # save data directory 
+    with open(DATA_DIRECTORY_PATH, "w") as f:
+        json.dump(data_directory, f, indent=4)
+
+
+
+def load_lorenz96_2coupled(fname):
+    """ Retrieves the lorenz96 data that was saved to a .npz file. 
+    
+        Args: 
+            fname (str): path to npz file.
+
+        Returns:
+            t (float array): array of time points
+            X (float array): array of state values at each time point
+    """
+    data = np.load(fname, allow_pickle=True)
+    t = data['t']
+    X = data['X']
+    return t, X
+
+def normalize_lorenz96_2coupled(graph_tuple_dict):
+    """ normalize dataset of GraphTuples using training data distribution.
+
+        (replaced existing train, val, test with normalized versions)
+    """
+    # compute X1 mean and std, X2 mean and std, using solely input train data
+    X1_input_nodes = []
+    X2_input_nodes = []
+    for window in graph_tuple_dict['train']['inputs']:
+        for graphtuple in window: 
+            X1_input_nodes.append(graphtuple.nodes[:, 0])
+            X2_input_nodes.append(graphtuple.nodes[:, 1])
+    X1_input_nodes = np.concatenate(X1_input_nodes)
+    X2_input_nodes = np.concatenate(X2_input_nodes)
+
+    X1_mean = X1_input_nodes.mean()
+    X2_mean = X2_input_nodes.mean()
+    X1_std = X1_input_nodes.std()
+    X2_std = X2_input_nodes.std()
+
+    # normalize the data 
+    # (we have to iterate over each graphtuple in the dataset anyway to extract the node features; kind of inefficient)
+    for data_mode in ['train', 'val', 'test']:
+        for data_type in ['inputs', 'targets']:
+            for window in graph_tuple_dict[data_mode][data_type]:
+                for i, graphtuple in enumerate(window): 
+                    # normalize data 
+                    norm_X1 = (graphtuple.nodes[:, 0] - X1_mean) / X1_std
+                    norm_X2 = (graphtuple.nodes[:, 1] - X2_mean) / X2_std
+                    # reassign data 
+                    graphtuple = jraph.GraphsTuple(
+                        globals=graphtuple.globals,
+                        nodes=np.vstack((norm_X1, norm_X2)),
+                        edges=graphtuple.edges,
+                        receivers=graphtuple.receivers,
+                        senders=graphtuple.senders,
+                        n_node=graphtuple.n_node,
+                        n_edge=graphtuple.n_edge)
+                    
+                    window[i] = graphtuple
+
+    return graph_tuple_dict
