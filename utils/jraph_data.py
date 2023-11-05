@@ -29,7 +29,8 @@ def get_lorenz_graph_tuples(n_samples,
                             h=1,
                             seed=42,
                             normalize=False,
-                            data_path=None):
+                            # data_path=None,
+                            ):
     """ Generated data using Lorenz96 and splits data into train/val/test. 
 
         Args: 
@@ -71,7 +72,7 @@ def get_lorenz_graph_tuples(n_samples,
                 or original 1-layer Lorenz96 model
             seed (int): for reproducibility 
             normalize (bool): whether or not to normalize the data.
-            data_path (str): optional file path. if None, will iterate over all existing simulation data to find a valid dataset with compatible parameters, or generate new simulation data if it cannot find any (using a default generated data path). if a path is given, then the simulation data will be checked to see if it exists is compatible; if it doesn't exist, it will generate new simulation data at that path; if it exists but was incompatible, an error will be raised. 
+            # data_path (str): optional file path. if None, will iterate over all existing simulation data to find a valid dataset with compatible parameters, or generate new simulation data if it cannot find any (using a default generated data path). if a path is given, then the simulation data will be checked to see if it exists is compatible; if it doesn't exist, it will generate new simulation data at that path; if it exists but was incompatible, an error will be raised. 
 
         Output:
             returns a dict with the keys "train"/"val"/"test", each corresponding to a list. Each element of the list contains a data sample, consisting of another dictionary containing "input_graphs" and "target_graphs" as keys; the values are lists of jraph.GraphsTuple objects, corresponding to the input graphs and target graphs datapoints in the sample. 
@@ -132,9 +133,6 @@ def get_lorenz_graph_tuples(n_samples,
     # t has shape (simulation_steps_needed,)
     # X has shape (simulation_steps_needed, K*2)
 
-    # TODO: NORMALIZE THE DATA
-    # PICK UP HERE 
-
     # iterate over windows of input/target data and convert into a series of GraphTuple objects 
     # note that the indices include the buffer section, so we first drop that
     all_input_window_indices = all_input_window_indices[init_buffer_samples:]
@@ -149,7 +147,7 @@ def get_lorenz_graph_tuples(n_samples,
         input_X = X[input_window_indices] # shape (input_steps, K*2)
         target_X = X[target_window_indices] # shape (output_steps, K*2)
 
-        # convert features into a GraphTuple structure 
+        # convert features into a GraphsTuple structure 
         input_graphtuples = []
         target_graphtuples = []
         for step in range(input_steps):
@@ -164,8 +162,13 @@ def get_lorenz_graph_tuples(n_samples,
             graphtuple = timestep_to_graphstuple(data, K)
             target_graphtuples.append(graphtuple)
 
-        input_windows.append(input_graphtuples)
-        target_windows.append(target_graphtuples)
+        # batch the window of data into a single GraphsTuple
+        input_window = jraph.batch(input_graphtuples)
+        target_window = jraph.batch(target_graphtuples)
+
+
+        input_windows.append(input_window)
+        target_windows.append(target_window)
 
     # partition series of windows into train/val/test 
     train_upper_index = round(train_pct * n_samples)
@@ -182,6 +185,7 @@ def get_lorenz_graph_tuples(n_samples,
             'inputs': input_windows[val_upper_index:], 
             'targets': target_windows[val_upper_index:]
         }}
+    # type: Dict[str, Dict[str, List[jraph.GraphsTuple]]]
     
     # normalize data 
     if normalize:
@@ -230,10 +234,12 @@ def timestep_to_graphstuple(data, K):
 
 
 def print_graph_fts(graph: jraph.GraphsTuple):
-    print(f'Number of nodes: {graph.n_node[0]}')
-    print(f'Number of edges: {graph.n_edge[0]}')
-    print(f'Node features shape: {graph.nodes.shape}')
-    print(f'Edge features shape: {graph.edges.shape}')
+    n_graphs = graph.n_node.shape[0]
+    print(f'Number of graphs: {n_graphs}')
+    print(f'Number of nodes: {graph.n_node}')
+    print(f'Number of edges: {graph.n_edge}')
+    print(f'Node features (total) shape: {graph.nodes.shape}')
+    print(f'Edge features (total) shape: {graph.edges.shape}')
     print(f'Global features shape: {graph.globals.shape}')
 
 

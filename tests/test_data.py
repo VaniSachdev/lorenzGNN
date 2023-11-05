@@ -1,6 +1,7 @@
 from utils.lorenz import get_window_indices, load_lorenz96_2coupled
 from utils.jraph_data import get_lorenz_graph_tuples
 from run_net import set_up_logging
+import jax.numpy as jnp
 import numpy as np
 import unittest
 import logging
@@ -147,19 +148,18 @@ class DataTests(unittest.TestCase):
             b=self.b,
             h=self.h,
             seed=self.seed, 
-            normalize=False, # TODO: test with normalized. perhaps just with plots
-            data_path=data_path)
+            normalize=False) # TODO: test with normalized. perhaps just with plots)
         # graph_tuple_dict has the following format:
         # {
         # 'train': {
-        #     'inputs': list of windows of graphtuples
-        #     'targets': list of windows of graphtuples},
+        #     'inputs': list of graphtuples, which are batched window data
+        #     'targets': list of graphtuples},
         # 'val': {
-        #     'inputs': list of windows of graphtuples,
-        #     'targets': list of windows of graphtuples},
+        #     'inputs': list of graphtuples,
+        #     'targets': list of graphtuples},
         # 'test': {
-        #     'inputs': list of windows of graphtuples,
-        #     'targets': list of windows of graphtuples},
+        #     'inputs': list of graphtuples,
+        #     'targets': list of graphtuples},
         # }
 
         # check sizes of datasets
@@ -171,18 +171,29 @@ class DataTests(unittest.TestCase):
                          int(n_samples * 0.3))
         self.assertEqual(len(graph_tuple_dict['test']['inputs']), 0)
 
-        # check number of data points in a window
-        self.assertEqual(len(graph_tuple_dict['train']['inputs'][0]),
-                         input_steps)
-        self.assertEqual(len(graph_tuple_dict['train']['targets'][0]),
-                         output_steps)
+        # check number of data points in a window (i.e. a batched graphstuple)
+        sample_graphstuple = graph_tuple_dict['train']['inputs'][0]
+
+        n_input_graphs = sample_graphstuple.n_node.shape[0]
+        n_target_graphs = graph_tuple_dict['train']['targets'][0].n_node.shape[0]
+        self.assertEqual(n_input_graphs, input_steps)
+        self.assertEqual(n_target_graphs, output_steps)
 
         # check basic graph size attributes
-        sample_graphtuple = graph_tuple_dict['train']['inputs'][0][0]
-        self.assertEqual(sample_graphtuple.nodes.shape, (self.K, 2))
-        self.assertEqual(sample_graphtuple.edges.shape, (self.K * 5, 1))
-        self.assertEqual(sample_graphtuple.n_node[0], self.K)
-        self.assertEqual(sample_graphtuple.n_edge[0], self.K * 5)
+        self.assertEqual(sample_graphstuple.nodes.shape, (self.K * input_steps, 2))
+        self.assertEqual(
+            sample_graphstuple.edges.shape, (self.K * 5 * input_steps, 1))
+        self.assertTrue(
+            np.array_equal(
+                sample_graphstuple.n_node, 
+                [self.K] * input_steps))
+        self.assertTrue(
+            np.array_equal(
+                sample_graphstuple.n_edge, 
+                [self.K * 5] * input_steps
+            ), 
+            (sample_graphstuple.n_edge, [self.K * 5] * input_steps)
+        )
 
         # check data sampling (check time values)
         # TODO: we dropped the time array - should we keep it? prob not necessary right? 
@@ -211,30 +222,26 @@ class DataTests(unittest.TestCase):
 
 
         # check data sampling for first train input window, X1 variable
-        data_sampled_first_train_input_window_X1 = np.vstack(
-            [graph_tuple_dict['train']['inputs'][0][i].nodes[:, 0] for i in range(input_steps)])
+        data_sampled_first_train_input_window_X1 = jnp.reshape(graph_tuple_dict['train']['inputs'][0].nodes[:, 0], (input_steps, self.K))
         self.assertTrue(
             np.allclose(
                 data_sampled_first_train_input_window_X1,
                 raw_data[list(range(3600, 3615 + 1, 3)), :self.K]))
         # check data sampling for first train input window, X2 variable
-        data_sampled_first_train_input_window_X2 = np.vstack(
-            [graph_tuple_dict['train']['inputs'][0][i].nodes[:, 1] for i in range(input_steps)])
+        data_sampled_first_train_input_window_X2 = jnp.reshape(graph_tuple_dict['train']['inputs'][0].nodes[:, 1], (input_steps, self.K))
         self.assertTrue(
             np.allclose(data_sampled_first_train_input_window_X2,
                 raw_data[list(range(3600, 3615 + 1, 3)), self.K:]))
 
         # check data sampling for last train target window, X1 variable
-        data_sampled_last_train_target_window_X1 = np.vstack(
-            [graph_tuple_dict['train']['targets'][-1][i].nodes[:, 0] for i in range(output_steps)])
+        data_sampled_last_train_target_window_X1 = jnp.reshape(graph_tuple_dict['train']['targets'][-1].nodes[:, 0], (output_steps, self.K))
         self.assertTrue(
             np.allclose(
                 data_sampled_last_train_target_window_X1,
                 raw_data[list(range(6102, 6111 + 1, 3)), :self.K]))
 
         # check data sampling for last val target window, X1 variable
-        data_sampled_last_val_target_window_X1 = np.vstack(
-            [graph_tuple_dict['val']['targets'][-1][i].nodes[:, 0] for i in range(output_steps)])
+        data_sampled_last_val_target_window_X1 = jnp.reshape(graph_tuple_dict['val']['targets'][-1].nodes[:, 0], (output_steps, self.K))
         self.assertTrue(
             np.allclose(
                 data_sampled_last_val_target_window_X1,
