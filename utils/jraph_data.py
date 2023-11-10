@@ -162,14 +162,9 @@ def get_lorenz_graph_tuples(n_samples,
             graphtuple = timestep_to_graphstuple(data, K)
             target_graphtuples.append(graphtuple)
 
-        # batch the window of data into a single GraphsTuple
-        input_window = jraph.batch(input_graphtuples)
-        target_window = jraph.batch(target_graphtuples)
-
-
-        input_windows.append(input_window)
-        target_windows.append(target_window)
-
+        input_windows.append(input_graphtuples)
+        target_windows.append(target_graphtuples)
+        
     # partition series of windows into train/val/test 
     train_upper_index = round(train_pct * n_samples)
     val_upper_index = round((train_pct + val_pct) * n_samples)
@@ -185,7 +180,7 @@ def get_lorenz_graph_tuples(n_samples,
             'inputs': input_windows[val_upper_index:], 
             'targets': target_windows[val_upper_index:]
         }}
-    # type: Dict[str, Dict[str, List[jraph.GraphsTuple]]]
+    # type: Dict[str, Dict[str, List[List[jraph.GraphsTuple]]]]
     
     # normalize data 
     if normalize:
@@ -234,12 +229,10 @@ def timestep_to_graphstuple(data, K):
 
 
 def print_graph_fts(graph: jraph.GraphsTuple):
-    n_graphs = graph.n_node.shape[0]
-    print(f'Number of graphs: {n_graphs}')
-    print(f'Number of nodes: {graph.n_node}')
-    print(f'Number of edges: {graph.n_edge}')
-    print(f'Node features (total) shape: {graph.nodes.shape}')
-    print(f'Edge features (total) shape: {graph.edges.shape}')
+    print(f'Number of nodes: {graph.n_node[0]}')
+    print(f'Number of edges: {graph.n_edge[0]}')
+    print(f'Node features shape: {graph.nodes.shape}')
+    print(f'Edge features shape: {graph.edges.shape}')    
     print(f'Global features shape: {graph.globals.shape}')
 
 

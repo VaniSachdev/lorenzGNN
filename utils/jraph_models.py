@@ -6,8 +6,6 @@ from flax import linen as nn
 
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable, Sequence
 
-from utils.jraph_data import convert_jraph_to_networkx_graph
-
 
 def add_graphs_tuples_nodes(
     graphs: jraph.GraphsTuple, other_graphs: jraph.GraphsTuple
@@ -53,46 +51,66 @@ class MLPBlock(nn.Module):
     skip_connections: bool = True
     layer_norm: bool = False 
     deterministic: bool = True
+    randvar: bool = False
+    edge_features: Sequence[int] = (16, 8)
+    node_features: Sequence[int] = (32, 2)
+    global_features: Sequence[int] = None
 
     @nn.compact
-    def __call__(self, graphs: jraph.GraphsTuple) -> jraph.GraphsTuple:
-        # TODO: do we actually not want these? 
-        update_edge_fn = jraph.concatenated_args(
-            MLP(
-                feature_sizes=[16, 8], # arbitrarily chosen for now
-                dropout_rate=self.dropout_rate,
-                deterministic=self.deterministic,
-            )
-        )
+    def __call__(self, 
+                 input_window_graphs: Iterable[jraph.GraphsTuple],
+                 ) -> jraph.GraphsTuple:
+        # since we can't process input time series yet, this is just a dummy placeholder step where we select the first graph in the input window to make it workable with this model architecture
+        # TODO is this what is causing our gradients to be all 0? 
+        # TODO: eventually, implement time series input
+        input_graph = input_window_graphs[0]
 
-        update_node_fn = jraph.concatenated_args(
-            MLP(
-                feature_sizes=[32, 2], # arbitrarily chosen for now. we want the last layer to be 2 so that we get the same number of node features that we put in. 
-                dropout_rate=self.dropout_rate,
-                deterministic=self.deterministic,
+        if self.edge_features is not None:
+            update_edge_fn = jraph.concatenated_args(
+                MLP(
+                    feature_sizes=self.edge_features, # arbitrarily chosen for now
+                    dropout_rate=self.dropout_rate,
+                    deterministic=self.deterministic,
+                )
             )
-        )
-        # update_global_fn = jraph.concatenated_args(
-        #     MLP(
-        #         feature_sizes=[1],
-        #         dropout_rate=self.dropout_rate,
-        #         deterministic=self.deterministic,
-        #     )
-        # )
+        else:
+            update_edge_fn = None 
+
+        if self.node_features is not None:
+            update_node_fn = jraph.concatenated_args(
+                MLP(
+                    feature_sizes=self.node_features, # arbitrarily chosen for now. we want the last layer to be 2 so that we get the same number of node features that we put in. 
+                    dropout_rate=self.dropout_rate,
+                    deterministic=self.deterministic,
+                )
+            )
+        else:
+            update_node_fn = None 
+
+        if self.global_features is not None:
+            update_global_fn = jraph.concatenated_args(
+                MLP(
+                    feature_sizes=self.global_features,
+                    dropout_rate=self.dropout_rate,
+                    deterministic=self.deterministic,
+                )
+            )
+        else:
+            update_global_fn = None 
 
         graph_net = jraph.GraphNetwork(
             update_node_fn=update_node_fn,
             update_edge_fn=update_edge_fn,
-            update_global_fn=None,
+            update_global_fn=update_global_fn,
         )
 
-        processed_graphs = graph_net(graphs)
+        processed_graphs = graph_net(input_graph)
         # revert edge features to their original values
         # we want the edges to be encoded/processed by the update_edge_fn internally as part of the processing for the node features, but we only use the encoded edges internally and don't want it to affect the actual graph structure of the data because we know that it is fixed 
-        processed_graphs = processed_graphs._replace(edges=graphs.edges)
+        processed_graphs = processed_graphs._replace(edges=input_graph.edges)
 
         if self.skip_connections:
-            processed_graphs = add_graphs_tuples_nodes(processed_graphs, graphs)
+            processed_graphs = add_graphs_tuples_nodes(processed_graphs, input_graph)
 
         if self.layer_norm:
             # TODO: why does layernorm cause the edge features to all be 0? 
@@ -102,6 +120,7 @@ class MLPBlock(nn.Module):
                 globals=nn.LayerNorm()(processed_graphs.globals),
             )
 
+        
         return processed_graphs
     
 
@@ -145,18 +164,6 @@ class MLPGraphNetwork(nn.Module):
         # TODO: do we need skip connections or layer_norm here? 
 
         return processed_graphs
-
-
-
-# TODO: do we still need these 
-# def MLPBlock_fn(graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
-#     net = MLPBlock()
-#     return net(graph)
-
-
-# def MLPGraphNetwork_fn(input_graph: jraph.GraphsTuple) -> jraph.GraphsTuple:
-#     net = MLPGraphNetwork(n_blocks=9)
-#     return net(input_graph)
 
 
 def naive_const_fn(graph: jraph.GraphsTuple) -> jraph.GraphsTuple:

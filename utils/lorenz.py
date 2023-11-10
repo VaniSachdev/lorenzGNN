@@ -1077,9 +1077,10 @@ def normalize_lorenz96_2coupled(graph_tuple_dict):
     # compute X1 mean and std, X2 mean and std, using solely input train data
     X1_input_nodes = []
     X2_input_nodes = []
-    for window_graph in graph_tuple_dict['train']['inputs']:
-        X1_input_nodes.append(window_graph.nodes[:, 0])
-        X2_input_nodes.append(window_graph.nodes[:, 1])
+    for window in graph_tuple_dict['train']['inputs']:
+        for graphtuple in window: 
+            X1_input_nodes.append(graphtuple.nodes[:, 0])
+            X2_input_nodes.append(graphtuple.nodes[:, 1])    
     X1_input_nodes = np.concatenate(X1_input_nodes)
     X2_input_nodes = np.concatenate(X2_input_nodes)
 
@@ -1092,21 +1093,21 @@ def normalize_lorenz96_2coupled(graph_tuple_dict):
     # (we have to iterate over each graphtuple in the dataset anyway to extract the node features; kind of inefficient)
     for data_mode in ['train', 'val', 'test']:
         for data_type in ['inputs', 'targets']:
-            list_of_window_graphs = graph_tuple_dict[data_mode][data_type]
-            for i, window_graph in enumerate(list_of_window_graphs):
-                # normalize data 
-                norm_X1 = (window_graph.nodes[:, 0] - X1_mean) / X1_std
-                norm_X2 = (window_graph.nodes[:, 1] - X2_mean) / X2_std
-                # reassign data 
-                normalized_window_graph = jraph.GraphsTuple(
-                    globals=window_graph.globals,
-                    nodes=np.vstack((norm_X1, norm_X2)).T,
-                    edges=window_graph.edges,
-                    receivers=window_graph.receivers,
-                    senders=window_graph.senders,
-                    n_node=window_graph.n_node,
-                    n_edge=window_graph.n_edge)
-                
-                list_of_window_graphs[i] = normalized_window_graph
-
+            for window in graph_tuple_dict[data_mode][data_type]:
+                for i, graphtuple in enumerate(window): 
+                    # normalize data 
+                    norm_X1 = (graphtuple.nodes[:, 0] - X1_mean) / X1_std
+                    norm_X2 = (graphtuple.nodes[:, 1] - X2_mean) / X2_std
+                    # reassign data 
+                    graphtuple = jraph.GraphsTuple(
+                        globals=graphtuple.globals,
+                        nodes=np.vstack((norm_X1, norm_X2)),
+                        edges=graphtuple.edges,
+                        receivers=graphtuple.receivers,
+                        senders=graphtuple.senders,
+                        n_node=graphtuple.n_node,
+                        n_edge=graphtuple.n_edge)
+                    
+                    window[i] = graphtuple
+                    
     return graph_tuple_dict
