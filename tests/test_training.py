@@ -56,7 +56,7 @@ class TrainingTests(unittest.TestCase):
 
         # check the structure of the predicted nodes is valid 
         self.assertEqual(len(pred_nodes), data_params['output_steps']) # note that pred_nodes is a list containing a jax array for each rollout step 
-        self.assertEqual(pred_nodes[0].shape, (data_params['K'], ), f"pred_nodes shape is {pred_nodes[0].shape}")
+        self.assertEqual(pred_nodes[0].shape, (data_params['K'], 2), f"pred_nodes shape is {pred_nodes[0].shape}")
 
 
     def test_train_step(self):
@@ -151,10 +151,6 @@ class TrainingTests(unittest.TestCase):
 
         # check that the params are different after training
         # check params for first MLP layer in update_edge_fn
-        # pdb.set_trace()
-        # TODO PICK UP HERE 
-        # MAKE SURE GRADS ARE NOT ZERO ? 
-
         self.assertFalse(
             jnp.array_equal(
                 init_state.params['params']['MLP_0']['Dense_0']['bias'],

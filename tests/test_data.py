@@ -49,7 +49,7 @@ class DataTests(unittest.TestCase):
         self.assertEqual(len(x_windows_1[0]), input_steps_1)
         self.assertEqual(len(y_windows_1[0]), output_steps_1)
 
-        # spot-check that the first and last window window have the correct start and end indices
+        # spot-check that the first and last window have the correct start and end indices
         self.assertEqual(x_windows_1[0][0], 0)
         self.assertEqual(x_windows_1[0][-1], 8)
         self.assertEqual(y_windows_1[0][0], 12)
@@ -96,24 +96,6 @@ class DataTests(unittest.TestCase):
         self.assertEqual(y_windows_2[-1][0], 7182)
         self.assertEqual(y_windows_2[-1][-1], 7191)
 
-    # def test_lorenzToDF(self):
-    #     logging.info('\n ------------ test_lorenzToDF ------------ \n')
-    #     n_steps = 3591
-    #     time_resolution = 100
-    #     init_buffer_samples = 100
-
-    #     df = lorenzToDF(K=self.K,
-    #                     F=self.F,
-    #                     c=self.c,
-    #                     b=self.b,
-    #                     h=self.h,
-    #                     coupled=True,
-    #                     n_steps=n_steps + init_buffer_samples + 1,
-    #                     time_resolution=time_resolution,
-    #                     seed=self.seed)
-    #     logging.info(f"lorenz dataframe shape: {df.shape}")
-    #     self.assertEqual(df.shape,
-    #                      (n_steps + init_buffer_samples + 1, self.K * 2))
 
     def test_graphtuple_datasets(self):
         """ test that the Lorenz data windows are sampling the correct values."""

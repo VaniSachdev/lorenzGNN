@@ -34,18 +34,17 @@ import ml_collections
 import numpy as np
 import optax
 import sklearn.metrics
-import tensorflow as tf
+import pdb 
 
-import input_pipeline
-import models
-
+# from . import input_pipeline
+from utils.jraph_models import MLPBlock
 
 def create_model(
     config: ml_collections.ConfigDict, deterministic: bool
 ) -> nn.Module:
   """Creates a Flax model, as specified by the config."""
   if config.model == 'MLPBlock':
-    return models.MLPBlock(
+    return MLPBlock(
         dropout_rate=config.dropout_rate,
         skip_connections=config.skip_connections,
         layer_norm=config.layer_norm,
@@ -94,165 +93,150 @@ def MSE(targets, preds):
     mse = jnp.mean(jnp.square(preds - targets))
     return mse 
 
-def one_step_loss(state: train_state.TrainState, 
-                  input_graph: jraph.GraphsTuple,
-                 target_graph: jraph.GraphsTuple,
-                 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """ Computes loss for a one-step prediction (no rollout). 
+# deprecated
+# def one_step_loss(state: train_state.TrainState, 
+#                   input_graph: jraph.GraphsTuple,
+#                  target_graph: jraph.GraphsTuple,
+#                  ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+#     """ Computes loss for a one-step prediction (no rollout). 
     
-        Also returns predicted nodes.
-    """
-    pred_graph = state.apply_fn(state.params, input_graph) 
-    X1_preds = pred_graph.nodes[:, 0] # nodes has shape (36, 2)
-    X1_targets = target_graph.nodes[:, 0]
+#         Also returns predicted nodes.
+#     """
+#     pred_graph = state.apply_fn(state.params, input_graph) 
+#     X1_preds = pred_graph.nodes[:, 0] # nodes has shape (36, 2)
+#     X1_targets = target_graph.nodes[:, 0]
 
-    # MSE loss
-    loss = MSE(X1_targets, X1_preds)
-    return loss, X1_preds
+#     # MSE loss
+#     loss = MSE(X1_targets, X1_preds)
+#     return loss, X1_preds
 
-# TODO update test for this 
+
+# def unbatch_i(batched_graph, i):
+#    """ Retrieve the ith graph in a batched graphtuple. This helper function is jittable and replaced the jraph.unbatch function, which cannot be jitted. """
+#    n_graphs = batched_graph.n_edge.shape[0]
+# #    assert i < n_graphs # this line is not jittable. :( 
+
+#    node_start_idx = jax.lax.dynamic_slice(batched_graph.n_node, start_indices=(0,), slice_sizes=(i,)).sum()
+#    # the i variable here is not jittable. kms 
+#    node_end_idx = jax.lax.dynamic_slice(batched_graph.n_node, start_indices=(i,), slice_sizes=(n_graphs-i,)).sum() - n_graphs.n_node[i]
+# #    edge_start_idx = batched_graph.n_edge[:i].sum()
+# #    edge_end_idx = batched_graph.n_edge[i:].sum() - n_graphs.n_edge[i]
+   
+#    selected_graph = jraph.GraphsTuple(
+#         globals=batched_graph.globals[i],
+#         nodes=batched_graph.nodes[node_start_idx:node_end_idx, :],
+#         edges=batched_graph.edges[edge_start_idx:edge_end_idx, :],
+#         receivers=batched_graph.receivers[edge_start_idx:edge_end_idx],
+#         senders=batched_graph.senders[edge_start_idx:edge_end_idx],
+#         n_node=jnp.array([batched_graph.n_node[i]]),
+#         n_edge=jnp.array([batched_graph.n_edge[i]]),
+#    )
+   
+#    return selected_graph 
+
+
 def rollout_loss(state: train_state.TrainState, 
-                 input_window_graph: jraph.GraphsTuple,
-                 target_window_graph: jraph.GraphsTuple, 
+                input_window_graphs: Iterable[jraph.GraphsTuple],
+                target_window_graphs: Iterable[jraph.GraphsTuple],
+                 n_steps: int,
                  rngs: Optional[Dict[str, jnp.ndarray]],
                  ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """ Computes average loss for an n-step rollout. 
     
         Also returns predicted nodes.
     """
-    # TODO: theoretically n_steps can be eliminated and we just base the rollout on the size of the target_graphs list 
-    target_window_graph_list = jraph.unbatch(target_window_graph)
-    n_steps = target_window_graph.n_node.shape[0]
+    # TODO: theoretically n_steps can be eliminated and we just base the rollout on the size of the target_graphs list. however, for now we are passing in n_steps because i don't know how else we can do the jax jit with argnames 
+    assert n_steps > 0
+    assert len(target_window_graphs) == n_steps, (len(target_window_graphs), n_steps)
 
-    curr_input_window_graph = input_window_graph
+    curr_input_window_graphs = input_window_graphs
     pred_nodes = []
     total_loss = 0
     for i in range(n_steps):
-        pred_graph = state.apply_fn(state.params, curr_input_window_graph, 
-                                    rngs=rngs) 
-        # we need to unbatch the old input window and rebatch with the new prediction 
-        prev_input_window_list = jraph.unbatch(curr_input_window_graph)
-        new_input_window_list = prev_input_window_list[1:].append(pred_graph)
-        curr_input_window_graph = jraph.batch(new_input_window_list)
-        # TODO test this 
+        pred_graph = state.apply_fn(state.params, curr_input_window_graphs, rngs=rngs) 
 
+        # retrieve the new input window 
+        curr_input_window_graphs = curr_input_window_graphs[1:] + [pred_graph]
 
-        X1_preds = pred_graph.nodes[:, 0]
-        target_graph = target_window_graph_list[i]
-        X1_targets = target_graph.nodes[:, 0]
-        loss = MSE(X1_targets, X1_preds)
+        preds = pred_graph.nodes
+        targets = target_window_graphs[i].nodes
+    
+        loss = MSE(targets, preds)
 
-        pred_nodes.append(X1_preds) # Side-effects aren't allowed in JAX-transformed functions, and appending to a list is a side effect ??
+        pred_nodes.append(preds) # Side-effects aren't allowed in JAX-transformed functions, and appending to a list is a side effect ??
+
         total_loss += loss
 
     avg_loss = total_loss / n_steps
 
     return avg_loss, pred_nodes
 
-# TODO test this 
-rollout_loss_batched = jax.vmap(rollout_loss, in_axes=[None, 1, 1, None])
+
+# TODO this is currently malfunctioning 
+# rollout_loss_batched = jax.vmap(rollout_loss, in_axes=[None, 1, 1, None])
 # batch over the params input_window_graph and target_window_graph but not 
 # state or rngs
 
 
 @flax.struct.dataclass
 class EvalMetrics(metrics.Collection):
-  loss: metrics.Average.from_output('loss')
-  # the loss value is passed in as a named param. it can be either single step 
-  # or rollout loss, and is chosen in the training step, so we do not need to 
-  # specify it here. 
+    loss: metrics.Average.from_output('loss')
+    # the loss value is passed in as a named param. it can be either single step 
+    # or rollout loss, and is chosen in the training step, so we do not need to 
+    # specify it here. 
 
 @flax.struct.dataclass
 class TrainMetrics(metrics.Collection):
-  loss: metrics.Average.from_output('loss')
+    loss: metrics.Average.from_output('loss')
 
 
-# @flax.struct.dataclass
-# class EvalMetrics(metrics.Collection):
-#   accuracy: metrics.Average.from_fun(predictions_match_labels)
-#   loss: metrics.Average.from_output('loss')
-#   mean_average_precision: MeanAveragePrecision
-
-
-# @flax.struct.dataclass
-# class TrainMetrics(metrics.Collection):
-#   accuracy: metrics.Average.from_fun(predictions_match_labels)
-#   loss: metrics.Average.from_output('loss')
-
-# TODO what is this for? (seems like for graph classification which is not what we want)
-# def replace_globals(graphs: jraph.GraphsTuple) -> jraph.GraphsTuple:
-#   """Replaces the globals attribute with a constant feature for each graph."""
-#   return graphs._replace(globals=jnp.ones([graphs.n_node.shape[0], 1]))
-
-
-# def get_predicted_logits(
-#     state: train_state.TrainState,
-#     graphs: jraph.GraphsTuple,
-#     rngs: Optional[Dict[str, jnp.ndarray]],
-# ) -> jnp.ndarray:
-#   """Get predicted logits from the network for input graphs."""
-#   pred_graphs = state.apply_fn(state.params, graphs, rngs=rngs)
-#   logits = pred_graphs.globals
-#   return logits
-
-
-# def get_valid_mask(
-#     labels: jnp.ndarray, graphs: jraph.GraphsTuple
-# ) -> jnp.ndarray:
-#   """Gets the binary mask indicating only valid labels and graphs."""
-#   # We have to ignore all NaN values - which indicate labels for which
-#   # the current graphs have no label.
-#   labels_mask = ~jnp.isnan(labels)
-
-#   # Since we have extra 'dummy' graphs in our batch due to padding, we want
-#   # to mask out any loss associated with the dummy graphs.
-#   # Since we padded with `pad_with_graphs` we can recover the mask by using
-#   # get_graph_padding_mask.
-#   graph_mask = jraph.get_graph_padding_mask(graphs)
-
-#   # Combine the mask over labels with the mask over graphs.
-#   return labels_mask & graph_mask[:, None]
-
-
-# TODO check if this can jit properly
-@jax.jit
-def train_step(
+def train_step_fn(
     state: train_state.TrainState,
-    batch_input_graphs: Iterable[jraph.GraphsTuple], 
-    batch_target_graphs: Iterable[jraph.GraphsTuple], 
+    n_steps: int,
+    input_window_graphs: Iterable[jraph.GraphsTuple],
+    target_window_graphs: Iterable[jraph.GraphsTuple],
+    # TODO: update once batched rollout is fixed
+    # batch_input_graphs: Iterable[jraph.GraphsTuple], 
+    # batch_target_graphs: Iterable[Iterable[jraph.GraphsTuple]], 
     rngs: Dict[str, jnp.ndarray],
 ) -> Tuple[train_state.TrainState, metrics.Collection]:
     """ Performs one update step over the current batch of graphs.
     
         Args: 
-        state (flax train_state.TrainState): TrainState containing 
-        batch_input_graphs (list of GraphsTuples): batch (list) of 
-            GraphsTuples, which each contain a window of input graphs
-        batch_target_graphs (GraphsTuple): batch (list) of GraphsTuples each 
-            containing a rollout window of the target output states
-            NOTE: the number of output graphs in this GraphsTuple object 
-            indicates the number of rollout steps that should be performed
+        state (flax train_state.TrainState): TrainState containing the model's 
+            call function, the model's params, and the optimizer 
+        input_window_graphs: list of graphs constituting a single window of 
+            input data 
+        target_window_graphs: list of graphs constituting a single window of 
+            target data 
+        # batch_input_graphs (list of GraphsTuples): batch (list) of 
+        #     GraphsTuples, which each contain a window of input graphs
+        # batch_target_graphs (GraphsTuple): batch (list) of GraphsTuples each 
+        #     containing a rollout window of the target output states
+        #     NOTE: the number of output graphs in this GraphsTuple object 
+        #     indicates the number of rollout steps that should be performed
         rngs (dict): rngs where the key of the dict denotes the rng use 
     """
+    assert n_steps > 0
+    assert len(target_window_graphs) == n_steps, (len(target_window_graphs), n_steps)
 
-    def loss_fn(params, batch_input_graphs, batch_target_graphs):
-        curr_state = state.replace(params=params)
-        # create a new state object so that we can pass the whole thing into the one_step_loss function. we do this so that we can keep track of the original state's apply_fn() and a custom param together (theoretically the param argument in this function doesn't need to be the same as the default state's param)
+    def loss_fn(params, input_window_graphs, target_window_graphs):
+        curr_state = state.replace(params=params) # create a new state object so that we can pass the whole thing into the one_step_loss function. we do this so that we can keep track of the original state's apply_fn() and a custom param together (theoretically the param argument in this function doesn't need to be the same as the default state's param)
 
         # Compute loss.
-        losses, batch_pred_nodes = rollout_loss_batched(curr_state, batch_input_graphs, batch_target_graphs, rngs=rngs)
+        loss, pred_nodes = rollout_loss(curr_state, input_window_graphs, target_window_graphs, n_steps, rngs=rngs)
+        return loss, pred_nodes
         # TODO trace where rngs is used, this is unclear. dropout? 
-        return losses, batch_pred_nodes
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-    (losses, batch_pred_nodes), grads = grad_fn(state.params, batch_input_graphs, batch_target_graphs)
+    (loss, pred_nodes), grads = grad_fn(state.params, input_window_graphs, target_window_graphs)
     state = state.apply_gradients(grads=grads) # update params in the state 
 
-    # TODO how to do batching w this? 
-    # the flax example seemed to just input a whole batch of loss... but they also calculated mean loss, which they proceeded to never use 
-    metrics_update = TrainMetrics.single_from_model_output(loss=losses)
+    metrics_update = TrainMetrics.single_from_model_output(loss=loss)
 
-    return state, metrics_update, batch_pred_nodes
+    return state, metrics_update, pred_nodes
+
+train_step = jax.jit(train_step_fn, static_argnames=["n_steps"])
 
 
 @jax.jit
@@ -317,6 +301,7 @@ def train_and_evaluate(
   Returns:
     The train state (which includes the `.params`).
   """
+  raise NotImplementedError
   # We only support single-host training.
   assert jax.process_count() == 1
 
@@ -326,12 +311,12 @@ def train_and_evaluate(
 
   # Get datasets, organized by split.
   logging.info('Obtaining datasets.')
-  datasets = input_pipeline.get_datasets(
-      config.batch_size,
-      add_virtual_node=config.add_virtual_node,
-      add_undirected_edges=config.add_undirected_edges,
-      add_self_loops=config.add_self_loops,
-  )
+#   datasets = input_pipeline.get_datasets(
+#       config.batch_size,
+#       add_virtual_node=config.add_virtual_node,
+#       add_undirected_edges=config.add_undirected_edges,
+#       add_self_loops=config.add_self_loops,
+#   )
   train_iter = iter(datasets['train'])
 
   # Create and initialize the network.
@@ -342,7 +327,7 @@ def train_and_evaluate(
   init_graphs = replace_globals(init_graphs)
   init_net = create_model(config, deterministic=True)
   params = jax.jit(init_net.init)(init_rng, init_graphs)
-  # commented out bc the package import was failing 
+  # commented out bc import failed
 #   parameter_overview.log_parameter_overview(params)
 
   # Create the optimizer.

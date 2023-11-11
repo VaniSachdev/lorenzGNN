@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import networkx as nx
 import numpy as np 
 import json 
-
+import os 
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
 import logging
 import pdb
@@ -81,12 +81,6 @@ def get_lorenz_graph_tuples(n_samples,
     assert abs(train_pct + val_pct + test_pct - 1.0) < 0.001
     # use error term due to float errors
 
-
-    # check if raw Lorenz data exists for the given params; otherwise generate it 
-    # check params of existing data by iterating over everything in the json data directory
-    with open(DATA_DIRECTORY_PATH, 'r') as f:
-        data_directory = json.load(f)
-
     # compute the number of total "raw" steps in the simulation we need
     # TODO test if this section is correct 
     total_samples = n_samples + init_buffer_samples
@@ -105,14 +99,20 @@ def get_lorenz_graph_tuples(n_samples,
         # add one to account for the zero-indexing
         simulation_steps_needed = int(all_input_window_indices[-1][-1] + 1)
 
+    # check if raw Lorenz data exists for the given params; otherwise generate it 
     valid_existing_simulation = False 
-    for entry in data_directory:
-        # check if the params match 
-        if (entry["K"] == K) and (entry["F"] == F) and (entry["c"] == c) and (entry["b"] == b) and (entry["h"] == h) and (entry["n_steps"] >= simulation_steps_needed) and (entry["resolution"] == time_resolution) and (entry["seed"] == seed):
-            # match; get the path to the data so we can load it later 
-            valid_existing_simulation = True 
-            lorenz_data_path = entry["fname"]
-            break 
+
+    # check params of existing data by iterating over everything in the json data directory
+    if os.path.exists(DATA_DIRECTORY_PATH):
+        with open(DATA_DIRECTORY_PATH, 'r') as f:
+            data_directory = json.load(f)
+        for entry in data_directory:
+            # check if the params match 
+            if (entry["K"] == K) and (entry["F"] == F) and (entry["c"] == c) and (entry["b"] == b) and (entry["h"] == h) and (entry["n_steps"] >= simulation_steps_needed) and (entry["resolution"] == time_resolution) and (entry["seed"] == seed):
+                # match; get the path to the data so we can load it later 
+                valid_existing_simulation = True 
+                lorenz_data_path = entry["fname"]
+                break 
 
     # otherwise, generate Lorenz data 
     if not valid_existing_simulation:
@@ -141,8 +141,6 @@ def get_lorenz_graph_tuples(n_samples,
     input_windows = []
     target_windows = []
     for input_window_indices, target_window_indices in zip(all_input_window_indices, all_target_window_indices):
-        # do we actually want or need to keep the t data? 
-
         # grab the window of data 
         input_X = X[input_window_indices] # shape (input_steps, K*2)
         target_X = X[target_window_indices] # shape (output_steps, K*2)

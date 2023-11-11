@@ -1,6 +1,6 @@
 from utils.jraph_data import get_lorenz_graph_tuples
 from utils.jraph_models import MLPBlock, MLPGraphNetwork
-from utils.jraph_training import train, evaluate
+from utils.jraph_training_old import train, evaluate
 
 import os
 import yaml

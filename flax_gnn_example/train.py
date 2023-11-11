@@ -158,11 +158,13 @@ def rollout_loss(state: train_state.TrainState,
         # retrieve the new input window 
         curr_input_window_graphs = curr_input_window_graphs[1:] + [pred_graph]
 
-        X1_preds = pred_graph.nodes[:, 0]
-        X1_targets = target_window_graphs[i].nodes[:, 0]
-        loss = MSE(X1_targets, X1_preds)
+        preds = pred_graph.nodes
+        targets = target_window_graphs[i].nodes
+    
+        loss = MSE(targets, preds)
 
-        pred_nodes.append(X1_preds) # Side-effects aren't allowed in JAX-transformed functions, and appending to a list is a side effect ??
+        pred_nodes.append(preds) # Side-effects aren't allowed in JAX-transformed functions, and appending to a list is a side effect ??
+
         total_loss += loss
 
     avg_loss = total_loss / n_steps
@@ -228,8 +230,8 @@ def train_step_fn(
 
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
     (loss, pred_nodes), grads = grad_fn(state.params, input_window_graphs, target_window_graphs)
-    print('grads', grads['params']['MLP_1']['Dense_1']['kernel'])
-    pdb.set_trace()
+    # print('grads', grads)
+    # pdb.set_trace()
     state = state.apply_gradients(grads=grads) # update params in the state 
 
     metrics_update = TrainMetrics.single_from_model_output(loss=loss)
