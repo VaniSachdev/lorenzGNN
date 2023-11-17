@@ -61,9 +61,9 @@ class ModelTests(unittest.TestCase):
         self.forward_pass_helper_test(model)
 
         # TODO: tests on multi-block cores are failing
-        # # test with two blocks, non-shared params
-        # model = MLPGraphNetwork(n_blocks=2, share_params=False)
-        # self.forward_pass_helper_test(model)
+        # test with two blocks, non-shared params
+        model = MLPGraphNetwork(n_blocks=2, share_params=False)
+        self.forward_pass_helper_test(model)
 
         # # test with two blocks, shared params
         # # TODO: add tests to check that params are actually shared

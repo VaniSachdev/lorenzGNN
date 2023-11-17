@@ -7,6 +7,8 @@ import networkx as nx
 import numpy as np 
 import json 
 import os 
+from datetime import datetime
+
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
 import logging
 import pdb
@@ -116,7 +118,7 @@ def get_lorenz_graph_tuples(n_samples,
 
     # otherwise, generate Lorenz data 
     if not valid_existing_simulation:
-        lorenz_data_path = "/Users/h.lu/Documents/_code/_research lorenz code/lorenzGNN/data/test.npz" # TODO decide what path to save it to 
+        lorenz_data_path = f"/Users/h.lu/Documents/_code/_research lorenz code/lorenzGNN/data/test_{datetime.now()}.npz" # TODO update what path to save it to 
         run_download_lorenz96_2coupled(
             fname=lorenz_data_path, 
             K=K,

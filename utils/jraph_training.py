@@ -21,7 +21,7 @@ from absl import logging
 from clu import checkpoint
 from clu import metric_writers
 from clu import metrics
-# from clu import parameter_overview
+from clu import parameter_overview
 from clu import periodic_actions
 import flax
 import flax.core
@@ -31,62 +31,69 @@ import jax
 import jax.numpy as jnp
 import jraph
 import ml_collections
-import numpy as np
+# import numpy as np
 import optax
-import sklearn.metrics
+# import sklearn.metrics
 import pdb 
 
 # from . import input_pipeline
 from utils.jraph_models import MLPBlock
+from utils.jraph_data import get_lorenz_graph_tuples, print_graph_fts
 
 def create_model(
     config: ml_collections.ConfigDict, deterministic: bool
 ) -> nn.Module:
-  """Creates a Flax model, as specified by the config."""
-  if config.model == 'MLPBlock':
-    return MLPBlock(
-        dropout_rate=config.dropout_rate,
-        skip_connections=config.skip_connections,
-        layer_norm=config.layer_norm,
-        deterministic=config.deterministic)
+    """Creates a Flax model, as specified by the config."""
+    if config.model == 'MLPBlock':
+        return MLPBlock(
+            dropout_rate=config.dropout_rate,
+            skip_connections=config.skip_connections,
+            layer_norm=config.layer_norm,
+            deterministic=deterministic,
+            edge_features=config.edge_features,
+            node_features=config.node_features,
+            global_features=config.global_features,
+        )
 
-#   if config.model == 'GraphNet':
-#     return models.GraphNet(
-#         latent_size=config.latent_size,
-#         num_mlp_layers=config.num_mlp_layers,
-#         message_passing_steps=config.message_passing_steps,
-#         output_globals_size=config.num_classes,
-#         dropout_rate=config.dropout_rate,
-#         skip_connections=config.skip_connections,
-#         layer_norm=config.layer_norm,
-#         use_edge_model=config.use_edge_model,
-#         deterministic=deterministic,
-#     )
-#   if config.model == 'GraphConvNet':
-#     return models.GraphConvNet(
-#         latent_size=config.latent_size,
-#         num_mlp_layers=config.num_mlp_layers,
-#         message_passing_steps=config.message_passing_steps,
-#         output_globals_size=config.num_classes,
-#         dropout_rate=config.dropout_rate,
-#         skip_connections=config.skip_connections,
-#         layer_norm=config.layer_norm,
-#         deterministic=deterministic,
-#     )
-  raise ValueError(f'Unsupported model: {config.model}.')
+    raise ValueError(f'Unsupported model: {config.model}.')
 
 
 def create_optimizer(
     config: ml_collections.ConfigDict,
 ) -> optax.GradientTransformation:
-  """Creates an optimizer, as specified by the config."""
-  if config.optimizer == 'adam':
-    return optax.adam(learning_rate=config.learning_rate)
-  if config.optimizer == 'sgd':
-    return optax.sgd(
-        learning_rate=config.learning_rate, momentum=config.momentum
-    )
-  raise ValueError(f'Unsupported optimizer: {config.optimizer}.')
+    """Creates an optimizer, as specified by the config."""
+    if config.optimizer == 'adam':
+        return optax.adam(learning_rate=config.learning_rate)
+    if config.optimizer == 'sgd':
+        return optax.sgd(
+            learning_rate=config.learning_rate, momentum=config.momentum
+        )
+    raise ValueError(f'Unsupported optimizer: {config.optimizer}.')
+
+def create_dataset(    
+    config: ml_collections.ConfigDict,
+) -> Dict[str, Dict[str, Iterable[jraph.GraphsTuple]]]:
+    dataset = get_lorenz_graph_tuples(
+        n_samples=config.n_samples,
+        input_steps=config.input_steps,
+        output_delay=config.output_delay,
+        output_steps=config.output_steps,
+        timestep_duration=config.timestep_duration,
+        sample_buffer=config.sample_buffer,
+        time_resolution=config.time_resolution,
+        init_buffer_samples=config.init_buffer_samples,
+        train_pct=config.train_pct,
+        val_pct=config.val_pct,
+        test_pct=config.test_pct,
+        K=config.K,
+        F=config.F,
+        c=config.c,
+        b=config.b,
+        h=config.h,
+        seed=config.seed,
+        normalize=config.normalize)
+
+    return dataset
 
 # define loss functions 
 def MSE(targets, preds):
@@ -138,21 +145,21 @@ def MSE(targets, preds):
 def rollout_loss(state: train_state.TrainState, 
                 input_window_graphs: Iterable[jraph.GraphsTuple],
                 target_window_graphs: Iterable[jraph.GraphsTuple],
-                 n_steps: int,
+                 n_rollout_steps: int,
                  rngs: Optional[Dict[str, jnp.ndarray]],
                  ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """ Computes average loss for an n-step rollout. 
     
         Also returns predicted nodes.
     """
-    # TODO: theoretically n_steps can be eliminated and we just base the rollout on the size of the target_graphs list. however, for now we are passing in n_steps because i don't know how else we can do the jax jit with argnames 
-    assert n_steps > 0
-    assert len(target_window_graphs) == n_steps, (len(target_window_graphs), n_steps)
+    # TODO: theoretically n_rollout_steps can be eliminated and we just base the rollout on the size of the target_graphs list. however, for now we are passing in n_rollout_steps because i don't know how else we can do the jax jit with argnames 
+    assert n_rollout_steps > 0
+    assert len(target_window_graphs) == n_rollout_steps, (len(target_window_graphs), n_rollout_steps)
 
     curr_input_window_graphs = input_window_graphs
     pred_nodes = []
     total_loss = 0
-    for i in range(n_steps):
+    for i in range(n_rollout_steps):
         pred_graph = state.apply_fn(state.params, curr_input_window_graphs, rngs=rngs) 
 
         # retrieve the new input window 
@@ -167,7 +174,7 @@ def rollout_loss(state: train_state.TrainState,
 
         total_loss += loss
 
-    avg_loss = total_loss / n_steps
+    avg_loss = total_loss / n_rollout_steps
 
     return avg_loss, pred_nodes
 
@@ -192,14 +199,14 @@ class TrainMetrics(metrics.Collection):
 
 def train_step_fn(
     state: train_state.TrainState,
-    n_steps: int,
+    n_rollout_steps: int,
     input_window_graphs: Iterable[jraph.GraphsTuple],
     target_window_graphs: Iterable[jraph.GraphsTuple],
     # TODO: update once batched rollout is fixed
     # batch_input_graphs: Iterable[jraph.GraphsTuple], 
     # batch_target_graphs: Iterable[Iterable[jraph.GraphsTuple]], 
     rngs: Dict[str, jnp.ndarray],
-) -> Tuple[train_state.TrainState, metrics.Collection]:
+) -> Tuple[train_state.TrainState, metrics.Collection, jnp.ndarray]:
     """ Performs one update step over the current batch of graphs.
     
         Args: 
@@ -217,14 +224,17 @@ def train_step_fn(
         #     indicates the number of rollout steps that should be performed
         rngs (dict): rngs where the key of the dict denotes the rng use 
     """
-    assert n_steps > 0
-    assert len(target_window_graphs) == n_steps, (len(target_window_graphs), n_steps)
+    assert n_rollout_steps > 0
+    assert len(target_window_graphs) == n_rollout_steps, (len(target_window_graphs), n_rollout_steps)
 
     def loss_fn(params, input_window_graphs, target_window_graphs):
         curr_state = state.replace(params=params) # create a new state object so that we can pass the whole thing into the one_step_loss function. we do this so that we can keep track of the original state's apply_fn() and a custom param together (theoretically the param argument in this function doesn't need to be the same as the default state's param)
 
         # Compute loss.
-        loss, pred_nodes = rollout_loss(curr_state, input_window_graphs, target_window_graphs, n_steps, rngs=rngs)
+        loss, pred_nodes = rollout_loss(
+           state=curr_state, input_window_graphs=input_window_graphs, 
+           target_window_graphs=target_window_graphs, n_rollout_steps=n_rollout_steps, 
+           rngs=rngs)
         return loss, pred_nodes
         # TODO trace where rngs is used, this is unclear. dropout? 
 
@@ -236,46 +246,64 @@ def train_step_fn(
 
     return state, metrics_update, pred_nodes
 
-train_step = jax.jit(train_step_fn, static_argnames=["n_steps"])
+train_step = jax.jit(train_step_fn, static_argnames=["n_rollout_steps"])
 
 
-@jax.jit
-def evaluate_step(
+def evaluate_step_fn(
     state: train_state.TrainState,
-    input_graphs: Iterable[jraph.GraphsTuple], # TODO make this iterable or batch? or an iterable of windows (which use graph batching)
-    target_graphs: Iterable[jraph.GraphsTuple], # actually this should just be one batched GraphsTuple right? since its an output window 
-) -> metrics.Collection:
+    n_rollout_steps: int,
+    input_window_graphs: Iterable[jraph.GraphsTuple],
+    target_window_graphs: Iterable[jraph.GraphsTuple],
+) -> Tuple[metrics.Collection, jnp.ndarray]:
     """Computes metrics over a set of graphs."""
 
     # Get node predictions and loss 
-    loss, pred_nodes = rollout_loss(state, input_graphs, target_graphs, rngs=None) # TODO why do they set rngs to None here, but use rngs in training? maybe because we dont want dropout during eval?
+
+    loss, pred_nodes = rollout_loss(state=state, 
+                                    input_window_graphs=input_window_graphs, 
+                                    target_window_graphs=target_window_graphs, 
+                                    n_rollout_steps=n_rollout_steps, rngs=None) 
+    # TODO why do they set rngs to None here, but use rngs in training? maybe because we dont want dropout during eval?
 
     eval_metrics = EvalMetrics.single_from_model_output(loss=loss)
 
     return eval_metrics, pred_nodes
 
+evaluate_step = jax.jit(evaluate_step_fn, static_argnames=["n_rollout_steps"])
 
 def evaluate_model(
     state: train_state.TrainState,
-    datasets: Dict[str, Dict[str, Iterable[jraph.GraphsTuple]]],
-    splits: Iterable[str], # e.g. ["train", "val", "test"] ??
+    n_rollout_steps: int,
+    datasets: Dict[str, Dict[str, Iterable[jraph.GraphsTuple]]], 
+    # first key = train/test/val, second key = input/target 
+    splits: Iterable[str], # e.g. ["val", "test"]
 ) -> Dict[str, metrics.Collection]:
     """Evaluates the model on metrics over the specified splits."""
 
     # Loop over each split independently.
     eval_metrics = {}
     for split in splits:
+        # splits = e.g. 'val', 'test
         split_metrics = None
 
-        # Loop over graphs.
-        for graphs in datasets[split].as_numpy_iterator():
-            split_metrics_update = evaluate_step(state, graphs)
+        input_data = datasets[split]['inputs']
+        target_data = datasets[split]['targets']
+
+        # loop over individual windows in the dataset 
+        for (input_window_graphs, target_window_graphs) in zip(
+            input_data, target_data):
+            split_metrics_update, _ = evaluate_step(
+                state=state, 
+                n_rollout_steps=n_rollout_steps, 
+                input_window_graphs=input_window_graphs, 
+                target_window_graphs=target_window_graphs)
 
             # Update metrics.
             if split_metrics is None:
-                    split_metrics = split_metrics_update
+                split_metrics = split_metrics_update
             else:
-                    split_metrics = split_metrics.merge(split_metrics_update)
+                split_metrics = split_metrics.merge(split_metrics_update)
+        
         eval_metrics[split] = split_metrics
 
     return eval_metrics  # pytype: disable=bad-return-type
@@ -292,120 +320,137 @@ def add_prefix_to_keys(result: Dict[str, Any], prefix: str) -> Dict[str, Any]:
 def train_and_evaluate(
     config: ml_collections.ConfigDict, workdir: str
 ) -> train_state.TrainState:
-  """Execute model training and evaluation loop.
+    """Execute model training and evaluation loop.
 
-  Args:
-    config: Hyperparameter configuration for training and evaluation.
-    workdir: Directory where the TensorBoard summaries are written to.
+    Args:
+        config: Hyperparameter configuration for training and evaluation.
+        workdir: Directory where the TensorBoard summaries are written to.
 
-  Returns:
-    The train state (which includes the `.params`).
-  """
-  raise NotImplementedError
-  # We only support single-host training.
-  assert jax.process_count() == 1
+    Returns:
+        The train state (which includes the `.params`).
+    """
+    # We only support single-host training.
+    assert jax.process_count() == 1
 
-  # Create writer for logs.
-  writer = metric_writers.create_default_writer(workdir)
-  writer.write_hparams(config.to_dict())
+    # Create writer for logs.
+    writer = metric_writers.create_default_writer(workdir)
+    writer.write_hparams(config.to_dict())
 
-  # Get datasets, organized by split.
-  logging.info('Obtaining datasets.')
-#   datasets = input_pipeline.get_datasets(
-#       config.batch_size,
-#       add_virtual_node=config.add_virtual_node,
-#       add_undirected_edges=config.add_undirected_edges,
-#       add_self_loops=config.add_self_loops,
-#   )
-  train_iter = iter(datasets['train'])
+    # Get datasets, organized by split.
+    logging.info('Obtaining datasets.')
+    datasets = create_dataset(config)
+    train_set = datasets['train']
+    input_data = train_set['inputs']
+    target_data = train_set['targets']
+    n_rollout_steps = config.output_steps
 
-  # Create and initialize the network.
-  logging.info('Initializing network.')
-  rng = jax.random.key(0)
-  rng, init_rng = jax.random.split(rng)
-  init_graphs = next(datasets['train'].as_numpy_iterator())
-  init_graphs = replace_globals(init_graphs)
-  init_net = create_model(config, deterministic=True)
-  params = jax.jit(init_net.init)(init_rng, init_graphs)
-  # commented out bc import failed
-#   parameter_overview.log_parameter_overview(params)
+    # Create and initialize the network.
+    logging.info('Initializing network.')
+    rng = jax.random.key(0)
+    rng, init_rng = jax.random.split(rng)
+    sample_input_window = input_data[0]
+    init_net = create_model(config, deterministic=True)
+    params = jax.jit(init_net.init)(init_rng, sample_input_window)
+    parameter_overview.log_parameter_overview(params) # logs to logging.info
 
-  # Create the optimizer.
-  tx = create_optimizer(config)
+    # Create the optimizer.
+    tx = create_optimizer(config)
 
-  # Create the training state.
-  net = create_model(config, deterministic=False)
-  state = train_state.TrainState.create(
-      apply_fn=net.apply, params=params, tx=tx
-  )
+    # Create the training state.
+    net = create_model(config, deterministic=False)
+    state = train_state.TrainState.create(
+        apply_fn=net.apply, params=params, tx=tx
+    )
 
-  # Set up checkpointing of the model.
-  # The input pipeline cannot be checkpointed in its current form,
-  # due to the use of stateful operations.
-  checkpoint_dir = os.path.join(workdir, 'checkpoints')
-  ckpt = checkpoint.Checkpoint(checkpoint_dir, max_to_keep=2)
-  state = ckpt.restore_or_initialize(state)
-  initial_step = int(state.step) + 1
+    # Set up checkpointing of the model.
+    # The input pipeline cannot be checkpointed in its current form,
+    # due to the use of stateful operations.
+    checkpoint_dir = os.path.join(workdir, 'checkpoints')
+    ckpt = checkpoint.Checkpoint(checkpoint_dir, max_to_keep=2)
+    state = ckpt.restore_or_initialize(state)
+    initial_step = int(state.step) # state.step is 0-indexed 
 
-  # Create the evaluation state, corresponding to a deterministic model.
-  eval_net = create_model(config, deterministic=True)
-  eval_state = state.replace(apply_fn=eval_net.apply)
+    # Create the evaluation state, corresponding to a deterministic model.
+    eval_net = create_model(config, deterministic=True)
+    eval_state = state.replace(apply_fn=eval_net.apply)
 
-  # Hooks called periodically during training.
-  report_progress = periodic_actions.ReportProgress(
-      num_train_steps=config.num_train_steps, writer=writer
-  )
-  profiler = periodic_actions.Profile(num_profile_steps=5, logdir=workdir)
-  hooks = [report_progress, profiler]
+    num_train_steps = config.epochs * len(train_set['inputs'])
+    # Hooks called periodically during training.
+    report_progress = periodic_actions.ReportProgress(
+        num_train_steps=num_train_steps, writer=writer
+    )
+    profiler = periodic_actions.Profile(num_profile_steps=5, logdir=workdir)
+    hooks = [report_progress, profiler]
 
-  # Begin training loop.
-  logging.info('Starting training.')
-  train_metrics = None
-  for step in range(initial_step, config.num_train_steps + 1):
-    # Split PRNG key, to ensure different 'randomness' for every step.
-    rng, dropout_rng = jax.random.split(rng)
+    # Begin training loop.
+    logging.info('Starting training.')
+    train_metrics = None
+    # for step in range(initial_step, num_train_steps + 1):
+        # epoch = step % len(train_set['inputs'])
+    
+    # note step is 0-indexed 
+    step = initial_step
+    for epoch in range(config.epochs):
 
-    # Perform one step of training.
-    with jax.profiler.StepTraceAnnotation('train', step_num=step):
-      graphs = jax.tree_util.tree_map(np.asarray, next(train_iter))
-      state, metrics_update = train_step(
-          state, graphs, rngs={'dropout': dropout_rng}
-      )
+        # iterate over data
+        # right now we don't have batching so we just loop over individual windows in the dataset
+        for (input_window_graphs, target_window_graphs) in zip(
+            input_data, target_data):
+            # Split PRNG key, to ensure different 'randomness' for every step.
+            rng, dropout_rng = jax.random.split(rng)
 
-      # Update metrics.
-      if train_metrics is None:
-        train_metrics = metrics_update
-      else:
-        train_metrics = train_metrics.merge(metrics_update)
+            # Perform one step of training.
+            with jax.profiler.StepTraceAnnotation('train', step_num=step):
+                # graphs = jax.tree_util.tree_map(np.asarray, next(train_iter))
+                state, metrics_update, _ = train_step(
+                    state=state, 
+                    n_rollout_steps=n_rollout_steps, 
+                    input_window_graphs=input_window_graphs, 
+                    target_window_graphs=target_window_graphs, 
+                    rngs={'dropout': dropout_rng}
+                )
 
-    # Quick indication that training is happening.
-    logging.log_first_n(logging.INFO, 'Finished training step %d.', 10, step)
-    for hook in hooks:
-      hook(step)
+                # Update metrics.
+                if train_metrics is None:
+                    train_metrics = metrics_update
+                else:
+                    train_metrics = train_metrics.merge(metrics_update)
 
-    # Log, if required.
-    is_last_step = step == config.num_train_steps - 1
-    if step % config.log_every_steps == 0 or is_last_step:
-      writer.write_scalars(
-          step, add_prefix_to_keys(train_metrics.compute(), 'train')
-      )
-      train_metrics = None
+            # Quick indication that training is happening.
+            logging.log_first_n(logging.INFO, 'Finished training step %d.', 10, step)
+            for hook in hooks:
+                hook(step)
 
-    # Evaluate on validation and test splits, if required.
-    if step % config.eval_every_steps == 0 or is_last_step:
-      eval_state = eval_state.replace(params=state.params)
+            step += 1
 
-      splits = ['validation', 'test']
-      with report_progress.timed('eval'):
-        eval_metrics = evaluate_model(eval_state, datasets, splits=splits)
-      for split in splits:
-        writer.write_scalars(
-            step, add_prefix_to_keys(eval_metrics[split].compute(), split)
-        )
+        # epoch is 0-indexed 
+        is_last_epoch = (epoch == config.epochs - 1) 
 
-    # Checkpoint model, if required.
-    if step % config.checkpoint_every_steps == 0 or is_last_step:
-      with report_progress.timed('checkpoint'):
-        ckpt.save(state)
+        # Log, if required.
+        if epoch % config.log_every_epochs == 0 or is_last_epoch:
+            writer.write_scalars(
+                step, add_prefix_to_keys(train_metrics.compute(), 'train')
+            )
+            train_metrics = None
 
-  return state
+        # Evaluate on validation and test splits, if required.
+        if epoch % config.eval_every_epochs == 0 or is_last_epoch:
+            eval_state = eval_state.replace(params=state.params)
+
+            splits = ['val', 'test']
+            with report_progress.timed('eval'):
+                eval_metrics = evaluate_model(
+                    state=eval_state, 
+                    n_rollout_steps=n_rollout_steps, 
+                    datasets=datasets, 
+                    splits=splits)
+            for split in splits:
+                writer.write_scalars(
+                    step, add_prefix_to_keys(eval_metrics[split].compute(), split)
+                )
+
+        # Checkpoint model, if required.
+        if epoch % config.checkpoint_every_epochs == 0 or is_last_epoch:
+            with report_progress.timed('checkpoint'):
+                ckpt.save(state)
+    return state

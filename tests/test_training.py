@@ -11,8 +11,9 @@ import pdb
 import jax.random
 
 from utils.jraph_models import MLPBlock, MLPGraphNetwork
-from flax_gnn_example.train import train_step, rollout_loss
+from utils.jraph_training import train_step, rollout_loss, evaluate_step, evaluate_model, train_and_evaluate
 from tests.helpers import get_sample_data, state_setup_helper
+from tests.mlp_sample_config import get_config
 
 class TrainingTests(unittest.TestCase):
 
@@ -45,7 +46,7 @@ class TrainingTests(unittest.TestCase):
         # call the function and make sure it doesn't crash 
         avg_loss, pred_nodes = rollout_loss(
             state=state, 
-            n_steps=data_params['output_steps'],
+            n_rollout_steps=data_params['output_steps'],
             input_window_graphs=sample_input_window,
             target_window_graphs=sample_target_window,
             rngs=None,
@@ -72,7 +73,9 @@ class TrainingTests(unittest.TestCase):
             'edge': [16, 8], 
             'node': [32, 2], 
             'global': None}
-        model = MLPBlock(edge_features=hidden_layer_features['edge'],
+        model = MLPBlock(layer_norm=False,
+                         deterministic=False,
+                         edge_features=hidden_layer_features['edge'],
                          node_features=hidden_layer_features['node'],
                          global_features=hidden_layer_features['global'])
 
@@ -84,7 +87,7 @@ class TrainingTests(unittest.TestCase):
         rng = jax.random.key(0)
         new_state, metrics_update, pred_nodes = train_step(
             state=init_state,
-            n_steps=data_params['output_steps'],
+            n_rollout_steps=data_params['output_steps'],
             input_window_graphs=sample_input_window,
             target_window_graphs=sample_target_window,
             rngs={'dropout': rng}
@@ -104,7 +107,6 @@ class TrainingTests(unittest.TestCase):
         self.assertEqual(len(pred_nodes), data_params['output_steps']) # pred_nodes is a list of arrays 
 
         # check that the number of params is correct 
-        hidden_layer_features
         self.assertEqual(
             init_state.params['params']['MLP_0']['Dense_0']['bias'].shape, 
             (hidden_layer_features['edge'][0], ))
@@ -117,7 +119,6 @@ class TrainingTests(unittest.TestCase):
         # + 2 received attributes per edge (X1 and X2 from the neighbor node) 
         # + 1 edge feature (indicating distance to feature node) 
 
-        hidden_layer_features
         self.assertEqual(
             init_state.params['params']['MLP_0']['Dense_1']['bias'].shape, 
             (hidden_layer_features['edge'][1], ))
@@ -139,7 +140,6 @@ class TrainingTests(unittest.TestCase):
         # + aggregated sender-node edge features from the edge_update mlp
         # + aggregated receiver-node edge features from the edge_update mlp
 
-        hidden_layer_features
         self.assertEqual(
             init_state.params['params']['MLP_1']['Dense_1']['bias'].shape, 
             (hidden_layer_features['node'][1], ))
@@ -174,14 +174,137 @@ class TrainingTests(unittest.TestCase):
                 init_state.params['params']['MLP_1']['Dense_0']['kernel'],
                 new_state.params['params']['MLP_1']['Dense_0']['kernel']))
 
+    def test_evaluate_step(self):
+        """ test that the evaluate_step() function works. """
+        logging.info('\n ------------ test_evaluate_step ------------ \n')
+        sample_dataset, data_params = get_sample_data()
 
-    # def test_batch_rollout_loss(self):
-    #     """ test that the batch rollout loss function works. """
-    #     logging.info('\n ------------ test_batch_rollout_loss ------------ \n')
-        # sample_dataset = self.get_sample_data()
+        sample_input_window = sample_dataset['train']['inputs'][0]
+        sample_target_window = sample_dataset['train']['targets'][0]
 
-        # sample_input_batch = sample_dataset['train']['inputs']
-        # sample_target_batch = sample_dataset['train']['targets']
+        # set up model
+        hidden_layer_features = {
+            'edge': [16, 8], 
+            'node': [32, 2], 
+            'global': None}
+        model = MLPBlock(edge_features=hidden_layer_features['edge'],
+                         node_features=hidden_layer_features['node'],
+                         global_features=hidden_layer_features['global'])
+
+
+        # set up state object, which helps us keep track of the model, params, and optimizer
+        init_state = state_setup_helper(model=model)
+
+        # test single eval step 
+        # rng = jax.random.key(0)
+        metrics_update, pred_nodes = evaluate_step(
+            state=init_state,
+            n_rollout_steps=data_params['output_steps'],
+            input_window_graphs=sample_input_window,
+            target_window_graphs=sample_target_window,
+        )
+
+        # check that metrics_update count was updated
+        self.assertEqual(metrics_update.loss.count, 1)
+
+        # check that the logged loss is valid
+        self.assertGreater(float(metrics_update.loss.total), 0)
+
+        # check that the number of predictions in the rollout is correct
+        self.assertEqual(len(pred_nodes), data_params['output_steps']) # pred_nodes is a list of arrays 
+
+
+    def test_evaluate_model(self):
+        """ test that the evaluate_model() function works. """
+        logging.info('\n ------------ test_evaluate_model ------------ \n')
+        sample_dataset, data_params = get_sample_data()
+
+        # set up model
+        hidden_layer_features = {
+            'edge': [16, 8], 
+            'node': [32, 2], 
+            'global': None}
+        model = MLPBlock(edge_features=hidden_layer_features['edge'],
+                         node_features=hidden_layer_features['node'],
+                         global_features=hidden_layer_features['global'])
+
+        # set up state object, which helps us keep track of the model, params, and optimizer
+        init_state = state_setup_helper(model=model)
+
+        # test evaluate_model 
+        eval_metrics = evaluate_model(
+            state=init_state,
+            n_rollout_steps=data_params['output_steps'],
+            datasets=sample_dataset,
+            splits=['val', 'test']
+        )
+
+        # check that count was updated
+        n_val_samples = int(data_params['n_samples']*data_params['val_pct'])
+        n_test_samples = int(data_params['n_samples']*data_params['test_pct'])
+        self.assertEqual(eval_metrics['val'].loss.count, n_val_samples)
+        self.assertEqual(eval_metrics['test'].loss.count, n_test_samples)
+
+        # check that the logged losses are valid
+        self.assertGreater(float(eval_metrics['val'].loss.total), 0)
+        self.assertGreater(float(eval_metrics['test'].loss.total), 0)
+
+    def test_train_and_evaluate(self):
+        """ test that the train_and_evaluate() function works. """
+        logging.info('\n ------------ test_train_and_evaluate ------------ \n')
+        mlp_config = get_config()
+        workdir=f"tests/outputs/train_testing_dir_{datetime.now()}"
+
+        # test that the function runs without crashing
+        trained_state = train_and_evaluate(config=mlp_config, workdir=workdir)
+
+        # check the state has the correct number of steps 
+        num_train_steps = int(
+            mlp_config.epochs * mlp_config.n_samples * mlp_config.train_pct
+            )
+        self.assertEqual(trained_state.step, num_train_steps)
+
+        # check that the number of params is correct 
+        self.assertEqual(
+            trained_state.params['params']['MLP_0']['Dense_0']['bias'].shape, 
+            (mlp_config.edge_features[0], ))
+        self.assertEqual(
+            trained_state.params['params']['MLP_0']['Dense_0']['kernel'].shape, 
+            (6, mlp_config.edge_features[0])) 
+        # the 6 input features for the edge_update mlp are from: 
+        #   1 global feature 
+        # + 2 sent attributes per edge (X1 and X2 from that node) 
+        # + 2 received attributes per edge (X1 and X2 from the neighbor node) 
+        # + 1 edge feature (indicating distance to feature node) 
+
+        self.assertEqual(
+            trained_state.params['params']['MLP_0']['Dense_1']['bias'].shape, 
+            (mlp_config.edge_features[1], ))
+        self.assertEqual(
+            trained_state.params['params']['MLP_0']['Dense_1']['kernel'].shape, 
+            (mlp_config.edge_features[0], 
+             mlp_config.edge_features[1])) 
+        
+        self.assertEqual(
+            trained_state.params['params']['MLP_1']['Dense_0']['bias'].shape, 
+            (mlp_config.node_features[0], ))
+        self.assertEqual(
+            trained_state.params['params']['MLP_1']['Dense_0']['kernel'].shape, 
+            (1+2+(2*mlp_config.edge_features[1]), 
+             mlp_config.node_features[0]))
+        # the 19 input features for the node_update mlp are from: 
+        #   1 global feature 
+        # + 2 node attributes (X1 and X2) 
+        # + aggregated sender-node edge features from the edge_update mlp
+        # + aggregated receiver-node edge features from the edge_update mlp
+
+        self.assertEqual(
+            trained_state.params['params']['MLP_1']['Dense_1']['bias'].shape, 
+            (mlp_config.node_features[1], ))
+        self.assertEqual(
+            trained_state.params['params']['MLP_1']['Dense_1']['kernel'].shape, 
+            (mlp_config.node_features[0], 
+             mlp_config.node_features[1])) 
 
 
 if __name__ == "__main__":

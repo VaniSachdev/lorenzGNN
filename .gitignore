@@ -4,6 +4,7 @@ tutorial*
 # outputs and logs
 *.log
 outputs/*
+*/outputs/*
 # VScode
 .vscode/*
 

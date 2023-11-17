@@ -6,9 +6,12 @@ from utils.jraph_data import get_lorenz_graph_tuples
 
 
 def get_sample_data(seed=42):
-    n_samples=2
+    n_samples=10
     input_steps=3
     output_steps=2
+    train_pct=.2
+    val_pct=0.4
+    test_pct=0.4
     K=36
     F=8
     c=10
@@ -16,27 +19,30 @@ def get_sample_data(seed=42):
     h=1
 
     sample_dataset = get_lorenz_graph_tuples(n_samples=n_samples,
-                        input_steps=input_steps,
+                        input_steps=3,
                         output_delay=0,
-                        output_steps=output_steps,
+                        output_steps=2,
                         timestep_duration=1,
                         sample_buffer=1,
                         time_resolution=100,
                         init_buffer_samples=0,
-                        train_pct=1.0,
-                        val_pct=0,
-                        test_pct=0,
-                        K=K,
-                        F=F,
-                        c=c,
-                        b=b,
-                        h=h,
+                        train_pct=train_pct,
+                        val_pct=val_pct,
+                        test_pct=test_pct,
+                        K=36,
+                        F=8,
+                        c=10,
+                        b=10,
+                        h=1,
                         seed=seed,
                         normalize=False)
 
     return sample_dataset, {"n_samples": n_samples,
                             "input_steps": input_steps,
                             "output_steps": output_steps,
+                            "train_pct": train_pct,
+                            "val_pct": val_pct,
+                            "test_pct": test_pct,
                             "K": K,
                             "F": F,
                             "c": c,
@@ -65,3 +71,5 @@ def state_setup_helper(model):
                                             tx=tx)
 
     return state 
+
+

@@ -1,6 +1,6 @@
 from utils.jraph_data import get_lorenz_graph_tuples
 from utils.jraph_models import MLPBlock, MLPGraphNetwork
-from utils.jraph_training_old import train, evaluate
+from utils.jraph_training import train_and_evaluate
 
 import os
 import yaml
@@ -59,45 +59,45 @@ def get_model_fn(cfg):
     return model_fns[model_arch]
 
 
-def run(cfg):
-    # load or generate dataset
-    data_dict_lists = get_dataset(cfg)
+# def run(cfg):
+#     # load or generate dataset
+#     data_dict_lists = get_dataset(cfg)
 
-    model_fn = get_model_fn(cfg)
+#     model_fn = get_model_fn(cfg)
 
-    # run training pipeline
-    assert cfg["TRAIN"]["ENABLE"] or (cfg["TRAIN"]["LOAD_PARAMS"]
-                                      and cfg["TRAIN"]["PARAM_PATH"] != "")
-    if cfg["TRAIN"]["ENABLE"]:
-        logging.info("running training pipeline")
-        start = datetime.now()
-        epochs = cfg["TRAIN"]["MAX_EPOCHS"]
-        params = train(model_fn,
-                       data_dict_lists=data_dict_lists,
-                       epochs=epochs,
-                       cfg=cfg)
-        logging.info(f"training complete: runtime of {datetime.now() - start}")
-    else:
-        # load existing parameters
-        raise NotImplementedError
+#     # run training pipeline
+#     assert cfg["TRAIN"]["ENABLE"] or (cfg["TRAIN"]["LOAD_PARAMS"]
+#                                       and cfg["TRAIN"]["PARAM_PATH"] != "")
+#     if cfg["TRAIN"]["ENABLE"]:
+#         logging.info("running training pipeline")
+#         start = datetime.now()
+#         epochs = cfg["TRAIN"]["MAX_EPOCHS"]
+#         params = train(model_fn,
+#                        data_dict_lists=data_dict_lists,
+#                        epochs=epochs,
+#                        cfg=cfg)
+#         logging.info(f"training complete: runtime of {datetime.now() - start}")
+#     else:
+#         # load existing parameters
+#         raise NotImplementedError
 
-    # run validation pipeline
-    if cfg["VAL"]["ENABLE"]:
-        logging.info("running validation pipeline")
-        start = datetime.now()
-        val_loss, val_preds = evaluate(model_fn, data_dict_lists['val'], params)
-        logging.info(
-            f"validation complete: runtime of {datetime.now() - start}")
+#     # run validation pipeline
+#     if cfg["VAL"]["ENABLE"]:
+#         logging.info("running validation pipeline")
+#         start = datetime.now()
+#         val_loss, val_preds = evaluate(model_fn, data_dict_lists['val'], params)
+#         logging.info(
+#             f"validation complete: runtime of {datetime.now() - start}")
 
-    # run testing pipeline
-    if cfg["TEST"]["ENABLE"]:
-        logging.info("running testing pipeline")
-        start = datetime.now()
-        test_loss, test_preds = evaluate(model_fn, data_dict_lists['test'],
-                                         params)
-        logging.info(f"testing complete: runtime of {datetime.now() - start}")
+#     # run testing pipeline
+#     if cfg["TEST"]["ENABLE"]:
+#         logging.info("running testing pipeline")
+#         start = datetime.now()
+#         test_loss, test_preds = evaluate(model_fn, data_dict_lists['test'],
+#                                          params)
+#         logging.info(f"testing complete: runtime of {datetime.now() - start}")
 
-    logging.info("run complete")
+#     logging.info("run complete")
 
 
 def set_up_logging(cfg=None, log_path=None, log_level_str="INFO"):

@@ -202,6 +202,76 @@ class DataTests(unittest.TestCase):
                 data_sampled_last_val_target_window_X1,
                 raw_data[list(range(7182, 7191 + 1, 3)), :self.K]))
 
+    def test_normalization(self):
+        """ test that the Lorenz graphstuples normalization preserves the correct data structures."""
+        # TODO: test the normalization computations/values too 
+        logging.info(
+            '\n ------------ test_normalization ------------ \n')
+        n_samples = 100
+        input_steps = 6
+        output_delay = 0
+        output_steps = 4
+        timestep_duration = 3
+        sample_buffer = 2  # buffer between consequetive samples
+        init_buffer_samples = 100  # buffer at the beginning of the dataset to allow for the system to settle
+        time_resolution = 100
+        # data_path = "/Users/h.lu/Documents/_code/_research lorenz code/lorenzGNN/data/test.npz"
+
+        # generate desired dataset with train/val split and subsampled windows
+        graph_tuple_dict = get_lorenz_graph_tuples(
+            n_samples=n_samples,
+            input_steps=input_steps,
+            output_delay=output_delay,
+            output_steps=output_steps,
+            timestep_duration=timestep_duration,
+            sample_buffer=sample_buffer,
+            time_resolution=time_resolution,
+            init_buffer_samples=init_buffer_samples,
+            train_pct=0.7,
+            val_pct=0.3,
+            test_pct=0.0,
+            K=self.K,
+            F=self.F,
+            c=self.c,
+            b=self.b,
+            h=self.h,
+            seed=self.seed, 
+            normalize=True)
+        # graph_tuple_dict has the following format:
+        # {
+        # 'train': {
+        #     'inputs': list of windows of graphtuples
+        #     'targets': list of windows of graphtuples},
+        # 'val': {
+        #     'inputs': list of windows of graphtuples,
+        #     'targets': list of windows of graphtuples},
+        # 'test': {
+        #     'inputs': list of windows of graphtuples,
+        #     'targets': list of windows of graphtuples},
+        # }
+        
+        # check sizes of datasets
+        self.assertEqual(len(graph_tuple_dict['train']['inputs']),
+                         int(n_samples * 0.7))
+        self.assertEqual(len(graph_tuple_dict['train']['targets']),
+                         int(n_samples * 0.7))
+        self.assertEqual(len(graph_tuple_dict['val']['inputs']),
+                         int(n_samples * 0.3))
+        self.assertEqual(len(graph_tuple_dict['test']['inputs']), 0)
+
+        # check number of data points in a window (i.e. a batched graphstuple)
+        # check number of data points in a window
+        self.assertEqual(len(graph_tuple_dict['train']['inputs'][0]),
+                         input_steps)
+        self.assertEqual(len(graph_tuple_dict['train']['targets'][0]),
+                         output_steps)
+        
+        # check basic graph size attributes
+        sample_graphtuple = graph_tuple_dict['train']['inputs'][0][0]
+        self.assertEqual(sample_graphtuple.nodes.shape, (self.K, 2))
+        self.assertEqual(sample_graphtuple.edges.shape, (self.K * 5, 1))
+        self.assertEqual(sample_graphtuple.n_node[0], self.K)
+        self.assertEqual(sample_graphtuple.n_edge[0], self.K * 5)
 
 if __name__ == "__main__":
     # set up logging for unittest outputs

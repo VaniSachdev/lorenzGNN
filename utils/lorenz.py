@@ -1101,7 +1101,7 @@ def normalize_lorenz96_2coupled(graph_tuple_dict):
                     # reassign data 
                     graphtuple = jraph.GraphsTuple(
                         globals=graphtuple.globals,
-                        nodes=np.vstack((norm_X1, norm_X2)),
+                        nodes=np.vstack((norm_X1, norm_X2)).T,
                         edges=graphtuple.edges,
                         receivers=graphtuple.receivers,
                         senders=graphtuple.senders,
