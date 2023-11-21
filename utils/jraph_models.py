@@ -3,10 +3,13 @@ import jax
 import jax.numpy as jnp
 import networkx as nx
 from flax import linen as nn
+from utils.jraph_data import print_graph_fts
 
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable, Sequence
+import pdb 
 
 
+# TODO fix either here or at call to make sure we are handling the window lists 
 def add_graphs_tuples_nodes(
     graphs: jraph.GraphsTuple, other_graphs: jraph.GraphsTuple
 ) -> jraph.GraphsTuple:
@@ -36,9 +39,8 @@ class MLP(nn.Module):
         for size in self.feature_sizes:
             x = nn.Dense(features=size)(x)
             x = self.activation(x)
-            x = nn.Dropout(rate=self.dropout_rate, deterministic=self.deterministic)(
-                x
-            )
+            x = nn.Dropout(rate=self.dropout_rate, 
+                           deterministic=self.deterministic)(x)
         return x
 
 
@@ -52,7 +54,7 @@ class MLPBlock(nn.Module):
     layer_norm: bool = False 
     deterministic: bool = True
     randvar: bool = False
-    edge_features: Sequence[int] = (16, 8)
+    edge_features: Sequence[int] = (4, 8) # the last feature size will be the number of features that the graph predicts
     node_features: Sequence[int] = (32, 2)
     global_features: Sequence[int] = None
 
@@ -61,7 +63,6 @@ class MLPBlock(nn.Module):
                  input_window_graphs: Iterable[jraph.GraphsTuple],
                  ) -> jraph.GraphsTuple:
         # since we can't process input time series yet, this is just a dummy placeholder step where we select the first graph in the input window to make it workable with this model architecture
-        # TODO is this what is causing our gradients to be all 0? 
         # TODO: eventually, implement time series input
         input_graph = input_window_graphs[0]
 
@@ -121,7 +122,7 @@ class MLPBlock(nn.Module):
             )
 
         
-        return processed_graphs
+        return [processed_graphs] # so that the input and output types will be consistent, and allow nn.Sequential to work
     
 
 class MLPGraphNetwork(nn.Module):
@@ -133,9 +134,19 @@ class MLPGraphNetwork(nn.Module):
     skip_connections: bool = True
     layer_norm: bool = False
     deterministic: bool = True
+    edge_features: Sequence[int] = (4, 8) # the last feature size will be the number of features that the graph predicts
+    node_features: Sequence[int] = (32, 2)
+    global_features: Sequence[int] = None
 
     @nn.compact
-    def __call__(self, graphs: jraph.GraphsTuple) -> jraph.GraphsTuple:
+    def __call__(
+        self, 
+        input_window_graphs: Iterable[jraph.GraphsTuple],
+    ) -> jraph.GraphsTuple:
+        # since we can't process input time series yet, this is just a dummy placeholder step where we select the first graph in the input window to make it workable with this model architecture
+        # TODO: eventually, implement time series input
+        assert self.n_blocks > 0
+
         blocks = []
         # TODO: should we be defining blocks here or in some kind of init/setup function ?
 
@@ -144,7 +155,10 @@ class MLPGraphNetwork(nn.Module):
                 dropout_rate=self.dropout_rate,
                 skip_connections = self.skip_connections,
                 layer_norm = self.layer_norm,
-                deterministic = self.deterministic           
+                deterministic = self.deterministic,
+                edge_features=self.edge_features,      
+                node_features=self.node_features,      
+                global_features=self.global_features,      
             )
             for _ in range(self.n_blocks):
                 blocks.append(shared_block)
@@ -155,15 +169,18 @@ class MLPGraphNetwork(nn.Module):
                     dropout_rate=self.dropout_rate,
                     skip_connections = self.skip_connections,
                     layer_norm = self.layer_norm,
-                    deterministic = self.deterministic           
+                    deterministic = self.deterministic,      
+                    edge_features=self.edge_features,      
+                    node_features=self.node_features,      
+                    global_features=self.global_features,      
                 ))
                 # TODO: check that this create distinct blocks with unshared params
 
         # Apply a Graph Network once for each message-passing round.
-        processed_graphs = nn.Sequential(blocks)(graphs)
+        processed_graphs_list = nn.Sequential(blocks)(input_window_graphs)
         # TODO: do we need skip connections or layer_norm here? 
 
-        return processed_graphs
+        return processed_graphs_list
 
 
 def naive_const_fn(graph: jraph.GraphsTuple) -> jraph.GraphsTuple:

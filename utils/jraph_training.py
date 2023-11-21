@@ -37,7 +37,7 @@ import optax
 import pdb 
 
 # from . import input_pipeline
-from utils.jraph_models import MLPBlock
+from utils.jraph_models import MLPBlock, MLPGraphNetwork
 from utils.jraph_data import get_lorenz_graph_tuples, print_graph_fts
 
 def create_model(
@@ -46,6 +46,18 @@ def create_model(
     """Creates a Flax model, as specified by the config."""
     if config.model == 'MLPBlock':
         return MLPBlock(
+            dropout_rate=config.dropout_rate,
+            skip_connections=config.skip_connections,
+            layer_norm=config.layer_norm,
+            deterministic=deterministic,
+            edge_features=config.edge_features,
+            node_features=config.node_features,
+            global_features=config.global_features,
+        )
+    elif config.model == 'MLPGraphNetwork':
+        return MLPGraphNetwork(
+            n_blocks=config.n_blocks,
+            share_params=config.share_params,
             dropout_rate=config.dropout_rate,
             skip_connections=config.skip_connections,
             layer_norm=config.layer_norm,
@@ -100,23 +112,6 @@ def MSE(targets, preds):
     mse = jnp.mean(jnp.square(preds - targets))
     return mse 
 
-# deprecated
-# def one_step_loss(state: train_state.TrainState, 
-#                   input_graph: jraph.GraphsTuple,
-#                  target_graph: jraph.GraphsTuple,
-#                  ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-#     """ Computes loss for a one-step prediction (no rollout). 
-    
-#         Also returns predicted nodes.
-#     """
-#     pred_graph = state.apply_fn(state.params, input_graph) 
-#     X1_preds = pred_graph.nodes[:, 0] # nodes has shape (36, 2)
-#     X1_targets = target_graph.nodes[:, 0]
-
-#     # MSE loss
-#     loss = MSE(X1_targets, X1_preds)
-#     return loss, X1_preds
-
 
 # def unbatch_i(batched_graph, i):
 #    """ Retrieve the ith graph in a batched graphtuple. This helper function is jittable and replaced the jraph.unbatch function, which cannot be jitted. """
@@ -152,6 +147,7 @@ def rollout_loss(state: train_state.TrainState,
     
         Also returns predicted nodes.
     """
+    # TODO: not urgent, but this could be refactored to call the rollout function
     # TODO: theoretically n_rollout_steps can be eliminated and we just base the rollout on the size of the target_graphs list. however, for now we are passing in n_rollout_steps because i don't know how else we can do the jax jit with argnames 
     assert n_rollout_steps > 0
     assert len(target_window_graphs) == n_rollout_steps, (len(target_window_graphs), n_rollout_steps)
@@ -160,7 +156,8 @@ def rollout_loss(state: train_state.TrainState,
     pred_nodes = []
     total_loss = 0
     for i in range(n_rollout_steps):
-        pred_graph = state.apply_fn(state.params, curr_input_window_graphs, rngs=rngs) 
+        pred_graphs_list = state.apply_fn(state.params, curr_input_window_graphs, rngs=rngs) 
+        pred_graph = pred_graphs_list[0]
 
         # retrieve the new input window 
         curr_input_window_graphs = curr_input_window_graphs[1:] + [pred_graph]
@@ -178,6 +175,41 @@ def rollout_loss(state: train_state.TrainState,
 
     return avg_loss, pred_nodes
 
+
+def rollout(state: train_state.TrainState, 
+                input_window_graphs: Iterable[jraph.GraphsTuple],
+                # target_window_graphs: Iterable[jraph.GraphsTuple],
+                 n_rollout_steps: int,
+                 rngs: Optional[Dict[str, jnp.ndarray]],
+                 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """ Computes rollout predictions. 
+    """
+    # TODO: theoretically n_rollout_steps can be eliminated and we just base the rollout on the size of the target_graphs list. however, for now we are passing in n_rollout_steps because i don't know how else we can do the jax jit with argnames 
+    assert n_rollout_steps > 0
+    # assert len(target_window_graphs) == n_rollout_steps, (len(target_window_graphs), n_rollout_steps)
+
+    curr_input_window_graphs = input_window_graphs
+    pred_nodes = []
+    # total_loss = 0
+    for i in range(n_rollout_steps):
+        pred_graphs_list = state.apply_fn(state.params, curr_input_window_graphs, rngs=rngs) 
+        pred_graph = pred_graphs_list[0]
+
+        # retrieve the new input window 
+        curr_input_window_graphs = curr_input_window_graphs[1:] + [pred_graph]
+
+        preds = pred_graph.nodes
+        # targets = target_window_graphs[i].nodes
+    
+        # loss = MSE(targets, preds)
+
+        pred_nodes.append(preds) # Side-effects aren't allowed in JAX-transformed functions, and appending to a list is a side effect ??
+
+        # total_loss += loss
+
+    # avg_loss = total_loss / n_rollout_steps
+
+    return pred_nodes # list of jnp arrays of size (36, 2)
 
 # TODO this is currently malfunctioning 
 # rollout_loss_batched = jax.vmap(rollout_loss, in_axes=[None, 1, 1, None])
@@ -369,6 +401,9 @@ def train_and_evaluate(
     ckpt = checkpoint.Checkpoint(checkpoint_dir, max_to_keep=2)
     state = ckpt.restore_or_initialize(state)
     initial_step = int(state.step) # state.step is 0-indexed 
+    init_epoch = initial_step // len(input_data) # 0-indexed 
+
+    print('init_epoch', init_epoch)
 
     # Create the evaluation state, corresponding to a deterministic model.
     eval_net = create_model(config, deterministic=True)
@@ -390,7 +425,7 @@ def train_and_evaluate(
     
     # note step is 0-indexed 
     step = initial_step
-    for epoch in range(config.epochs):
+    for epoch in range(init_epoch, config.epochs):
 
         # iterate over data
         # right now we don't have batching so we just loop over individual windows in the dataset

@@ -96,6 +96,42 @@ class DataTests(unittest.TestCase):
         self.assertEqual(y_windows_2[-1][0], 7182)
         self.assertEqual(y_windows_2[-1][-1], 7191)
 
+        # test 3
+        n_samples_3 = 20
+        init_buffer_samples_3 = 0
+        timestep_duration_3 = 2
+        input_steps_3 = 5
+        output_delay_3 = 1
+        output_steps_3 = 3
+        sample_buffer_3 = -8
+
+        x_windows_3, y_windows_3 = get_window_indices(
+            n_samples=n_samples_3 + init_buffer_samples_3,
+            timestep_duration=timestep_duration_3,
+            input_steps=input_steps_3,
+            output_delay=output_delay_3,
+            output_steps=output_steps_3,
+            sample_buffer=sample_buffer_3)
+
+        # check that the number of windows is correct
+        self.assertEqual(len(x_windows_3), n_samples_3 + init_buffer_samples_3)
+        self.assertEqual(len(y_windows_3), n_samples_3 + init_buffer_samples_3)
+
+        # spot-check that each window has the correct number of datapoints
+        self.assertEqual(len(x_windows_3[0]), input_steps_3)
+        self.assertEqual(len(y_windows_3[0]), output_steps_3)
+
+        # spot-check that the first and second window have the correct start and end indices; the start indices should be consecutive 
+        self.assertEqual(x_windows_3[0][0], 0)
+        self.assertEqual(x_windows_3[0][-1], 8)
+        self.assertEqual(y_windows_3[0][0], 12)
+        self.assertEqual(y_windows_3[0][-1], 16)
+
+        self.assertEqual(x_windows_3[1][0], 2)
+        self.assertEqual(x_windows_3[1][-1], 10)
+        self.assertEqual(y_windows_3[1][0], 14)
+        self.assertEqual(y_windows_3[1][-1], 18)
+
 
     def test_graphtuple_datasets(self):
         """ test that the Lorenz data windows are sampling the correct values."""
@@ -109,7 +145,8 @@ class DataTests(unittest.TestCase):
         sample_buffer = 2  # buffer between consequetive samples
         init_buffer_samples = 100  # buffer at the beginning of the dataset to allow for the system to settle
         time_resolution = 100
-        data_path = "/Users/h.lu/Documents/_code/_research lorenz code/lorenzGNN/data/test.npz"
+        # TODO: grab this automatically (right now it needs to be manually updated if anything changes)
+        data_path = "/Users/h.lu/Documents/_code/_research lorenz code/lorenzGNN/data/test_2023-11-17 14:57:41.380103.npz"
 
         # generate desired dataset with train/val split and subsampled windows
         graph_tuple_dict = get_lorenz_graph_tuples(

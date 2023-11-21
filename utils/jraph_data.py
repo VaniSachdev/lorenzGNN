@@ -8,6 +8,7 @@ import numpy as np
 import json 
 import os 
 from datetime import datetime
+from functools import partial
 
 from typing import Any, Callable, Dict, List, Optional, Tuple, Iterable
 import logging
@@ -189,6 +190,7 @@ def get_lorenz_graph_tuples(n_samples,
     return graph_tuple_dict
 
 
+@partial(jax.jit, static_argnames=["K"])
 def timestep_to_graphstuple(data, K):
     """ Converts an array of state values at a single timestep to a GraphsTuple 
         object.

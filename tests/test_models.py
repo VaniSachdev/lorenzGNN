@@ -32,7 +32,8 @@ class ModelTests(unittest.TestCase):
         # set up state object, which helps us keep track of the model, params, and optimizer
         state = state_setup_helper(model)
 
-        pred_graph = state.apply_fn(state.params, sample_input_window)
+        pred_graphs_list = state.apply_fn(state.params, sample_input_window)
+        pred_graph = pred_graphs_list[0]
         first_target_graph = sample_target_window[0]
 
         # check that the forward_pass_helper_test shape of the node features is correct
@@ -60,15 +61,18 @@ class ModelTests(unittest.TestCase):
         model = MLPGraphNetwork(n_blocks=1, share_params=False)
         self.forward_pass_helper_test(model)
 
-        # TODO: tests on multi-block cores are failing
         # test with two blocks, non-shared params
         model = MLPGraphNetwork(n_blocks=2, share_params=False)
         self.forward_pass_helper_test(model)
 
-        # # test with two blocks, shared params
-        # # TODO: add tests to check that params are actually shared
-        # model = MLPGraphNetwork(n_blocks=2, share_params=False)
-        # self.forward_pass_helper_test(model)
+        # test with ten blocks, non-shared params
+        model = MLPGraphNetwork(n_blocks=10, share_params=False)
+        self.forward_pass_helper_test(model)
+
+        # test with two blocks, shared params
+        # TODO: add tests to check that params are actually shared
+        model = MLPGraphNetwork(n_blocks=2, share_params=False)
+        self.forward_pass_helper_test(model)
 
 if __name__ == "__main__":
     # set up logging for unittest outputs
