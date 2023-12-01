@@ -50,12 +50,7 @@ def get_config():
 
     # GNN hyperparameters.
     config.model = 'MLPBlock'
-    #   config.message_passing_steps = 5
-    #   config.latent_size = 256
     config.dropout_rate = 0.1
-    #   config.num_mlp_layers = 1
-    #   config.num_classes = 128
-    #   config.use_edge_model = True
     config.skip_connections = False # This was throwing a broadcast error in add_graphs_tuples_nodes when this was set to True
     config.layer_norm = False # TODO perhaps we want to turn on later
     config.edge_features = (4, 8) # the last feature size will be the number of features that the graph predicts

@@ -232,7 +232,7 @@ class TrainingTests(unittest.TestCase):
         init_state = state_setup_helper(model=model)
 
         # test evaluate_model 
-        eval_metrics = evaluate_model(
+        eval_metrics_dict = evaluate_model(
             state=init_state,
             n_rollout_steps=data_params['output_steps'],
             datasets=sample_dataset,
@@ -242,12 +242,12 @@ class TrainingTests(unittest.TestCase):
         # check that count was updated
         n_val_samples = int(data_params['n_samples']*data_params['val_pct'])
         n_test_samples = int(data_params['n_samples']*data_params['test_pct'])
-        self.assertEqual(eval_metrics['val'].loss.count, n_val_samples)
-        self.assertEqual(eval_metrics['test'].loss.count, n_test_samples)
+        self.assertEqual(eval_metrics_dict['val'].loss.count, n_val_samples)
+        self.assertEqual(eval_metrics_dict['test'].loss.count, n_test_samples)
 
         # check that the logged losses are valid
-        self.assertGreater(float(eval_metrics['val'].loss.total), 0)
-        self.assertGreater(float(eval_metrics['test'].loss.total), 0)
+        self.assertGreater(float(eval_metrics_dict['val'].loss.total), 0)
+        self.assertGreater(float(eval_metrics_dict['test'].loss.total), 0)
 
     def test_train_and_evaluate(self):
         """ test that the train_and_evaluate() function works. """
@@ -256,7 +256,7 @@ class TrainingTests(unittest.TestCase):
         workdir=f"tests/outputs/train_testing_dir_{datetime.now()}"
 
         # test that the function runs without crashing
-        trained_state = train_and_evaluate(config=mlp_config, workdir=workdir)
+        trained_state, train_metrics, eval_metrics_dict = train_and_evaluate(config=mlp_config, workdir=workdir)
 
         # check the state has the correct number of steps 
         num_train_steps = int(

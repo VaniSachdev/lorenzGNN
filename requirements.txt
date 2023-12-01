@@ -3,9 +3,6 @@ numpy==1.23.3
 pandas==1.5.0
 scikit-learn==1.1.3
 scipy==1.9.2
-spektral==1.2.0
-tensorflow==2.11.0
-graph_nets==1.1.0
 networkx==3.0
 pyyaml==6.0
 jax
@@ -13,3 +10,4 @@ jraph
 flax
 optax
 clu==0.0.6
+optuna

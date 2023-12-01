@@ -103,7 +103,8 @@ def create_dataset(
         b=config.b,
         h=config.h,
         seed=config.seed,
-        normalize=config.normalize)
+        normalize=config.normalize,
+        fully_connected_edges=config.fully_connected_edges)
 
     return dataset
 
@@ -295,11 +296,10 @@ def evaluate_step_fn(
                                     input_window_graphs=input_window_graphs, 
                                     target_window_graphs=target_window_graphs, 
                                     n_rollout_steps=n_rollout_steps, rngs=None) 
-    # TODO why do they set rngs to None here, but use rngs in training? maybe because we dont want dropout during eval?
 
-    eval_metrics = EvalMetrics.single_from_model_output(loss=loss)
+    eval_metrics_dict = EvalMetrics.single_from_model_output(loss=loss)
 
-    return eval_metrics, pred_nodes
+    return eval_metrics_dict, pred_nodes
 
 evaluate_step = jax.jit(evaluate_step_fn, static_argnames=["n_rollout_steps"])
 
@@ -313,7 +313,7 @@ def evaluate_model(
     """Evaluates the model on metrics over the specified splits."""
 
     # Loop over each split independently.
-    eval_metrics = {}
+    eval_metrics_dict = {}
     for split in splits:
         # splits = e.g. 'val', 'test
         split_metrics = None
@@ -336,9 +336,9 @@ def evaluate_model(
             else:
                 split_metrics = split_metrics.merge(split_metrics_update)
         
-        eval_metrics[split] = split_metrics
+        eval_metrics_dict[split] = split_metrics
 
-    return eval_metrics  # pytype: disable=bad-return-type
+    return eval_metrics_dict  # pytype: disable=bad-return-type
 
 
 def add_prefix_to_keys(result: Dict[str, Any], prefix: str) -> Dict[str, Any]:
@@ -348,10 +348,21 @@ def add_prefix_to_keys(result: Dict[str, Any], prefix: str) -> Dict[str, Any]:
     """
     return {f'{prefix}_{key}': val for key, val in result.items()}
 
-
 def train_and_evaluate(
     config: ml_collections.ConfigDict, workdir: str
-) -> train_state.TrainState:
+) -> Tuple[train_state.TrainState, TrainMetrics, EvalMetrics]:
+    # Get datsets. 
+    logging.info('Obtaining datasets.')
+    datasets = create_dataset(config)
+
+    return train_and_evaluate_with_data(
+        config=config, workdir=workdir, datasets=datasets)
+ 
+
+def train_and_evaluate_with_data(
+    config: ml_collections.ConfigDict, workdir: str, 
+    datasets: Dict[str, Dict[str, Iterable[jraph.GraphsTuple]]]
+) -> Tuple[train_state.TrainState, TrainMetrics, EvalMetrics]:
     """Execute model training and evaluation loop.
 
     Args:
@@ -369,8 +380,6 @@ def train_and_evaluate(
     writer.write_hparams(config.to_dict())
 
     # Get datasets, organized by split.
-    logging.info('Obtaining datasets.')
-    datasets = create_dataset(config)
     train_set = datasets['train']
     input_data = train_set['inputs']
     target_data = train_set['targets']
@@ -402,8 +411,6 @@ def train_and_evaluate(
     state = ckpt.restore_or_initialize(state)
     initial_step = int(state.step) # state.step is 0-indexed 
     init_epoch = initial_step // len(input_data) # 0-indexed 
-
-    print('init_epoch', init_epoch)
 
     # Create the evaluation state, corresponding to a deterministic model.
     eval_net = create_model(config, deterministic=True)
@@ -474,18 +481,18 @@ def train_and_evaluate(
 
             splits = ['val', 'test']
             with report_progress.timed('eval'):
-                eval_metrics = evaluate_model(
+                eval_metrics_dict = evaluate_model(
                     state=eval_state, 
                     n_rollout_steps=n_rollout_steps, 
                     datasets=datasets, 
                     splits=splits)
             for split in splits:
                 writer.write_scalars(
-                    step, add_prefix_to_keys(eval_metrics[split].compute(), split)
+                    step, add_prefix_to_keys(eval_metrics_dict[split].compute(), split)
                 )
 
         # Checkpoint model, if required.
         if epoch % config.checkpoint_every_epochs == 0 or is_last_epoch:
             with report_progress.timed('checkpoint'):
                 ckpt.save(state)
-    return state
+    return state, train_metrics, eval_metrics_dict

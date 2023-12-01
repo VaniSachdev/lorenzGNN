@@ -32,6 +32,7 @@ def get_lorenz_graph_tuples(n_samples,
                             h=1,
                             seed=42,
                             normalize=False,
+                            fully_connected_edges=True,
                             # data_path=None,
                             ):
     """ Generated data using Lorenz96 and splits data into train/val/test. 
@@ -154,13 +155,13 @@ def get_lorenz_graph_tuples(n_samples,
         for step in range(input_steps):
             # take timeslice in the window and resize to have shape (K, num_fts)
             data = np.vstack((input_X[step, :K], input_X[step, K:])).T
-            graphtuple = timestep_to_graphstuple(data, K)
+            graphtuple = timestep_to_graphstuple(data, K, fully_connected_edges)
             input_graphtuples.append(graphtuple)
 
         for step in range(output_steps):
             # take timeslice in the window and resize to have shape (K, num_fts)
             data = np.vstack((target_X[step, :K], target_X[step, K:])).T
-            graphtuple = timestep_to_graphstuple(data, K)
+            graphtuple = timestep_to_graphstuple(data, K, fully_connected_edges)
             target_graphtuples.append(graphtuple)
 
         input_windows.append(input_graphtuples)
@@ -190,8 +191,8 @@ def get_lorenz_graph_tuples(n_samples,
     return graph_tuple_dict
 
 
-@partial(jax.jit, static_argnames=["K"])
-def timestep_to_graphstuple(data, K):
+@partial(jax.jit, static_argnames=["K", "fully_connected_edges"])
+def timestep_to_graphstuple(data, K, fully_connected_edges):
     """ Converts an array of state values at a single timestep to a GraphsTuple 
         object.
     
@@ -204,19 +205,40 @@ def timestep_to_graphstuple(data, K):
     senders = []
     edge_fts = []
 
-    for i in range(K):
-        senders += [i] * 5
-        receivers += [i, (i + 1) % K, (i + 2) % K, (i - 1) % K, (i - 2) % K]
+    if fully_connected_edges:
+        n_edges = K * K
+    # if the graph is fully connected, then each edge feature indicates the shortest distance (and direction) between the sender and receiver node. 
+        # since there are 35 nodes besides the sender node, we say that the nodes are split evenly between the 17 to the "right"/positive and 17 to the "left"/negative side of the sender node, with the last node arbitrarily placed on the right side of the sender. 
+        for i in range(K):
+            for j in range(K):
+                senders += [i]
+                receivers += [j]
+                dist = i - j
+                if dist < -17: dist += 36 # wrap around 
+                elif dist > 18: dist -= 36 # wrap around 
+                edge_fts += [[dist]]
 
-        # edge features = length + direction of edge
-        edge_fts += [
-            [0],  # self edge
-            [1],  # receiver is 1 node to the right
-            [2],  # receiver is 2 nodes to the right
-            [-1],  # receiver is 1 node to the left
-            [-2]  # receiver is 2 nodes to the left
-        ]
+                # ranged from -35 to +35 
 
+                # we want the +35 to be -1 and -35 to be +1
+                # TODO PICK UP HERE 
+
+    else: # only have edges to the nearest and second nearest neighbors (5 total)
+        n_edges = K * 5
+
+        for i in range(K):
+            senders += [i] * 5
+            receivers += [i, (i + 1) % K, (i + 2) % K, (i - 1) % K, (i - 2) % K]
+
+            # edge features = length + direction of edge
+            edge_fts += [
+                [0],  # self edge
+                [1],  # receiver is 1 node to the right
+                [2],  # receiver is 2 nodes to the right
+                [-1],  # receiver is 1 node to the left
+                [-2]  # receiver is 2 nodes to the left
+            ]
+    
     return jraph.GraphsTuple(
         globals=jnp.array([[1.]]),  # placeholder global features for now (was an empty array and None both causing errors down the line?)
         # globals=jnp.array([]),  # no global features for now
@@ -227,7 +249,7 @@ def timestep_to_graphstuple(data, K):
         receivers=jnp.array(receivers),
         senders=jnp.array(senders),
         n_node=jnp.array([K]),
-        n_edge=jnp.array([K * 5]))
+        n_edge=jnp.array([n_edges]))
 
 
 def print_graph_fts(graph: jraph.GraphsTuple):

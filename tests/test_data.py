@@ -200,9 +200,11 @@ class DataTests(unittest.TestCase):
         # check basic graph size attributes
         sample_graphtuple = graph_tuple_dict['train']['inputs'][0][0]
         self.assertEqual(sample_graphtuple.nodes.shape, (self.K, 2))
-        self.assertEqual(sample_graphtuple.edges.shape, (self.K * 5, 1))
+        # self.assertEqual(sample_graphtuple.edges.shape, (self.K * 5, 1))
+        self.assertEqual(sample_graphtuple.edges.shape, (self.K**2, 1)) # fully-connected graph
         self.assertEqual(sample_graphtuple.n_node[0], self.K)
-        self.assertEqual(sample_graphtuple.n_edge[0], self.K * 5)
+        # self.assertEqual(sample_graphtuple.n_edge[0], self.K * 5)
+        self.assertEqual(sample_graphtuple.n_edge[0], self.K**2)
 
         # check data sampling (compare node 0 time series in subsampled vs raw dataset)
         # retrieve the "raw" Lorenz simulation data so we can compare with the sampled windows
@@ -306,9 +308,11 @@ class DataTests(unittest.TestCase):
         # check basic graph size attributes
         sample_graphtuple = graph_tuple_dict['train']['inputs'][0][0]
         self.assertEqual(sample_graphtuple.nodes.shape, (self.K, 2))
-        self.assertEqual(sample_graphtuple.edges.shape, (self.K * 5, 1))
+        # self.assertEqual(sample_graphtuple.edges.shape, (self.K * 5, 1))
+        self.assertEqual(sample_graphtuple.edges.shape, (self.K**2, 1))
         self.assertEqual(sample_graphtuple.n_node[0], self.K)
-        self.assertEqual(sample_graphtuple.n_edge[0], self.K * 5)
+        # self.assertEqual(sample_graphtuple.n_edge[0], self.K * 5)
+        self.assertEqual(sample_graphtuple.n_edge[0], self.K**2)
 
 if __name__ == "__main__":
     # set up logging for unittest outputs

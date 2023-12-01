@@ -5,6 +5,8 @@ tutorial*
 *.log
 outputs/*
 */outputs/*
+experiments/tuning/configs/*
+
 # VScode
 .vscode/*
 
