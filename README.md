@@ -10,7 +10,7 @@
   ```
   source venv/bin/activate
   ```
-* install the required packages:
+* install the required packages inside the virtual environment:
   ```
   pip install -r requirements.txt
   ```
