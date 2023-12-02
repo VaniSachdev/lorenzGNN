@@ -33,7 +33,7 @@ import jraph
 import ml_collections
 # import numpy as np
 import optax
-# import sklearn.metrics
+import optuna 
 import pdb 
 
 # from . import input_pipeline
@@ -44,12 +44,20 @@ def create_model(
     config: ml_collections.ConfigDict, deterministic: bool
 ) -> nn.Module:
     """Creates a Flax model, as specified by the config."""
+    activation_funcs = {
+        "relu": nn.relu,
+        "elu": nn.elu,
+        "leaky_relu": nn.leaky_relu,
+    }
+    activation = activation_funcs[config.activation]
+
     if config.model == 'MLPBlock':
         return MLPBlock(
             dropout_rate=config.dropout_rate,
             skip_connections=config.skip_connections,
             layer_norm=config.layer_norm,
             deterministic=deterministic,
+            activation=activation,
             edge_features=config.edge_features,
             node_features=config.node_features,
             global_features=config.global_features,
@@ -62,6 +70,7 @@ def create_model(
             skip_connections=config.skip_connections,
             layer_norm=config.layer_norm,
             deterministic=deterministic,
+            activation=activation,
             edge_features=config.edge_features,
             node_features=config.node_features,
             global_features=config.global_features,
@@ -349,25 +358,35 @@ def add_prefix_to_keys(result: Dict[str, Any], prefix: str) -> Dict[str, Any]:
     return {f'{prefix}_{key}': val for key, val in result.items()}
 
 def train_and_evaluate(
-    config: ml_collections.ConfigDict, workdir: str
+    config: ml_collections.ConfigDict, workdir: str, 
+    trial: Optional[optuna.trial.Trial] = None,
 ) -> Tuple[train_state.TrainState, TrainMetrics, EvalMetrics]:
+    # TODO write docstrings 
+    """ Args: 
+            trial: Optuna trial object, if we are running hyperparmeter tuning 
+                and want early pruning
+    """
     # Get datsets. 
     logging.info('Obtaining datasets.')
     datasets = create_dataset(config)
 
     return train_and_evaluate_with_data(
-        config=config, workdir=workdir, datasets=datasets)
+        config=config, workdir=workdir, datasets=datasets, trial=trial)
  
 
 def train_and_evaluate_with_data(
     config: ml_collections.ConfigDict, workdir: str, 
-    datasets: Dict[str, Dict[str, Iterable[jraph.GraphsTuple]]]
+    datasets: Dict[str, Dict[str, Iterable[jraph.GraphsTuple]]], 
+    trial: Optional[optuna.trial.Trial] = None,
 ) -> Tuple[train_state.TrainState, TrainMetrics, EvalMetrics]:
     """Execute model training and evaluation loop.
 
     Args:
         config: Hyperparameter configuration for training and evaluation.
         workdir: Directory where the TensorBoard summaries are written to.
+        datasets: 
+        trial: Optuna trial object, if we are running hyperparmeter tuning 
+            and want early pruning
 
     Returns:
         The train state (which includes the `.params`).
@@ -490,6 +509,13 @@ def train_and_evaluate_with_data(
                 writer.write_scalars(
                     step, add_prefix_to_keys(eval_metrics_dict[split].compute(), split)
                 )
+
+            # prune hyperparameter tuning, if enabled 
+            if trial:
+                avg_eval_loss = eval_metrics_dict['val'].compute()['loss']
+                trial.report(value=avg_eval_loss, step=epoch)
+                if trial.should_prune():
+                    raise optuna.TrialPruned()
 
         # Checkpoint model, if required.
         if epoch % config.checkpoint_every_epochs == 0 or is_last_epoch:

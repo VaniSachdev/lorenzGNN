@@ -2,7 +2,6 @@ import jraph
 import jax
 import jax.numpy as jnp
 import networkx as nx
-import haiku as hk
 from utils.jraph_data import convert_jraph_to_networkx_graph
 from utils.jraph_training import rollout, rollout_loss, create_dataset, create_model, create_optimizer
 from clu import parameter_overview
@@ -134,9 +133,14 @@ def plot_predictions(
         # n_rollout_steps,
         #  total_steps,
         node, # 0-indexed 
+        plot_mode, # i.e. "train"/"val"/"test"
+        datasets=None,
         plot_all=True, # if false, only plot the first 100 
         title=''):
     assert plot_ith_rollout_step < config.output_steps
+    assert plot_mode in ["train", "val", "test"]
+
+
     checkpoint_dir = os.path.join(workdir, 'checkpoints')
     assert os.path.exists(checkpoint_dir)
 
@@ -146,11 +150,13 @@ def plot_predictions(
         )
 
     # Get datasets, organized by split.
-    logging.info('Obtaining datasets.')
-    datasets = create_dataset(config)
-    train_set = datasets['train']
-    input_data = train_set['inputs']
-    target_data = train_set['targets']
+    if datasets is None:
+        logging.info('Generating datasets from config because none provided.')
+        datasets = create_dataset(config)
+
+    plot_set = datasets[plot_mode]
+    input_data = plot_set['inputs']
+    target_data = plot_set['targets']
     # n_rollout_steps = config.output_steps
 
     # Create the evaluation state, corresponding to a deterministic model.

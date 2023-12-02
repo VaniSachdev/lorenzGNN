@@ -67,7 +67,7 @@ def objective(trial, datasets):
     # retrieve and return val loss (MSE)
     print("eval_metrics_dict['val'].loss", eval_metrics_dict['val'].loss)
     print()
-    return eval_metrics_dict['val'].loss.total
+    return eval_metrics_dict['val'].loss.total / eval_metrics_dict['val'].loss.count
 
 
 def get_data_config():

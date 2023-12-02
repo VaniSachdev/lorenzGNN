@@ -36,11 +36,17 @@ class MLP(nn.Module):
     @nn.compact
     def __call__(self, inputs):
         x = inputs
-        for size in self.feature_sizes:
+        for size in self.feature_sizes[:-1]:
             x = nn.Dense(features=size)(x)
             x = self.activation(x)
             x = nn.Dropout(rate=self.dropout_rate, 
                            deterministic=self.deterministic)(x)
+        
+        # we don't want an activation function like relu on the last layer 
+        x = nn.Dense(features=self.feature_sizes[-1])(x)
+        x = nn.Dropout(rate=self.dropout_rate, 
+                        deterministic=self.deterministic)(x)
+
         return x
 
 
@@ -54,9 +60,11 @@ class MLPBlock(nn.Module):
     layer_norm: bool = False 
     deterministic: bool = True
     randvar: bool = False
+    activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.relu
     edge_features: Sequence[int] = (4, 8) # the last feature size will be the number of features that the graph predicts
     node_features: Sequence[int] = (32, 2)
     global_features: Sequence[int] = None
+    
 
     @nn.compact
     def __call__(self, 
@@ -72,6 +80,7 @@ class MLPBlock(nn.Module):
                     feature_sizes=self.edge_features, # arbitrarily chosen for now
                     dropout_rate=self.dropout_rate,
                     deterministic=self.deterministic,
+                    activation=self.activation,
                 )
             )
         else:
@@ -83,6 +92,7 @@ class MLPBlock(nn.Module):
                     feature_sizes=self.node_features, # arbitrarily chosen for now. we want the last layer to be 2 so that we get the same number of node features that we put in. 
                     dropout_rate=self.dropout_rate,
                     deterministic=self.deterministic,
+                    activation=self.activation,
                 )
             )
         else:
@@ -94,6 +104,7 @@ class MLPBlock(nn.Module):
                     feature_sizes=self.global_features,
                     dropout_rate=self.dropout_rate,
                     deterministic=self.deterministic,
+                    activation=self.activation,
                 )
             )
         else:
@@ -134,6 +145,7 @@ class MLPGraphNetwork(nn.Module):
     skip_connections: bool = True
     layer_norm: bool = False
     deterministic: bool = True
+    activation: Callable[[jnp.ndarray], jnp.ndarray] = nn.relu
     edge_features: Sequence[int] = (4, 8) # the last feature size will be the number of features that the graph predicts
     node_features: Sequence[int] = (32, 2)
     global_features: Sequence[int] = None
@@ -158,7 +170,8 @@ class MLPGraphNetwork(nn.Module):
                 deterministic = self.deterministic,
                 edge_features=self.edge_features,      
                 node_features=self.node_features,      
-                global_features=self.global_features,      
+                global_features=self.global_features,   
+                activation=self.activation,   
             )
             for _ in range(self.n_blocks):
                 blocks.append(shared_block)
@@ -173,6 +186,7 @@ class MLPGraphNetwork(nn.Module):
                     edge_features=self.edge_features,      
                     node_features=self.node_features,      
                     global_features=self.global_features,      
+                    activation=self.activation,   
                 ))
                 # TODO: check that this create distinct blocks with unshared params
 
