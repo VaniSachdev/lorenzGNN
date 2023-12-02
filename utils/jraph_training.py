@@ -470,6 +470,8 @@ def train_and_evaluate_with_data(
                     target_window_graphs=target_window_graphs, 
                     rngs={'dropout': dropout_rng}
                 )
+                if jnp.isnan(metrics_update.loss.total):
+                    raise Exception("training losses for this graph are nan; aborting now")
 
                 # Update metrics.
                 if train_metrics is None:
