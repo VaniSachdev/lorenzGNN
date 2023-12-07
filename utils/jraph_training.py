@@ -471,7 +471,11 @@ def train_and_evaluate_with_data(
                     rngs={'dropout': dropout_rng}
                 )
                 if jnp.isnan(metrics_update.loss.total):
-                    raise Exception("training losses for this graph are nan; aborting now")
+                    # TODO is it ok to raise the prune even if the pruner doesn't say should prune? 
+                    logging.warning(f'loss is nan for step {step} (in epoch {epoch})')
+                    if trial:
+                        raise optuna.TrialPruned()
+                    # raise Exception("training losses for this graph are nan; aborting now")
 
                 # Update metrics.
                 if train_metrics is None:
@@ -514,9 +518,10 @@ def train_and_evaluate_with_data(
 
             # prune hyperparameter tuning, if enabled 
             if trial:
-                avg_eval_loss = eval_metrics_dict['val'].compute()['loss']
-                trial.report(value=avg_eval_loss, step=epoch)
+                avg_val_loss = eval_metrics_dict['val'].compute()['loss']
+                trial.report(value=avg_val_loss, step=epoch)
                 if trial.should_prune():
+                    logging.warning(f"pruning trial with avg val loss {avg_val_loss} after epoch {epoch}")
                     raise optuna.TrialPruned()
 
         # Checkpoint model, if required.
