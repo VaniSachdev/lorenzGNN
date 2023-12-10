@@ -199,11 +199,23 @@ def remove_bad_trials(study):
     )
 
     # load the good trials 
-    trials_to_keep = [t for t in study.get_trials() if (
-        (t.state == optuna.trial.TrialState.COMPLETE) # trial did not crash
-        and (t.values[0] < 1) # final val loss is within ok range
-        and (iv < 10 for iv in t.intermediate_values.values()) # intermed values are not crazy high 
-    )]
+    trials_to_keep = []
+    for t in study.get_trials():
+        if (t.state == optuna.trial.TrialState.COMPLETE) and (t.values[0] < 1):
+            intermed_values_not_huge = True
+            for iv in t.intermediate_values.values():
+                if iv >= 2:
+                    intermed_values_not_huge = False
+                    break
+
+            if intermed_values_not_huge:
+                trials_to_keep.append(t)
+
+    # trials_to_keep = [t for t in study.get_trials() if (
+    #     (t.state == optuna.trial.TrialState.COMPLETE) # trial did not crash
+    #     and (t.values[0] < 1) # final val loss is within ok range
+    #     and (iv < 10 for iv in t.intermediate_values.values()) # intermed values are not crazy high 
+    # )]
     new_study.add_trials(trials_to_keep)
 
     return new_study

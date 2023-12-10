@@ -15,7 +15,7 @@
 """Library file for executing training and evaluation on ogbg-molpcba."""
 
 import os
-from typing import Any, Dict, Iterable, Tuple, Optional
+from typing import Any, Dict, Iterable, Tuple, Optional, Callable
 
 from absl import logging
 from clu import checkpoint
@@ -117,11 +117,6 @@ def create_dataset(
 
     return dataset
 
-# define loss functions 
-def MSE(targets, preds):
-    mse = jnp.mean(jnp.square(preds - targets))
-    return mse 
-
 
 # def unbatch_i(batched_graph, i):
 #    """ Retrieve the ith graph in a batched graphtuple. This helper function is jittable and replaced the jraph.unbatch function, which cannot be jitted. """
@@ -153,7 +148,7 @@ def rollout_loss(state: train_state.TrainState,
                  n_rollout_steps: int,
                  rngs: Optional[Dict[str, jnp.ndarray]],
                  ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """ Computes average loss for an n-step rollout. 
+    """ Computes average loss (MSE) for an n-step rollout. 
     
         Also returns predicted nodes.
     """
@@ -186,6 +181,58 @@ def rollout_loss(state: train_state.TrainState,
     return avg_loss, pred_nodes
 
 
+def rollout_metric_suite(
+        metric_funcs: Iterable[Callable],
+        state: train_state.TrainState, 
+        input_window_graphs: Iterable[jraph.GraphsTuple],
+        target_window_graphs: Iterable[jraph.GraphsTuple],
+        n_rollout_steps: int,
+        rngs: Optional[Dict[str, jnp.ndarray]],
+    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """ Computes a suite of metrics for an n-step rollout. 
+    
+        Also returns predicted nodes.
+    """
+    assert n_rollout_steps > 0
+    assert len(target_window_graphs) == n_rollout_steps, (len(target_window_graphs), n_rollout_steps)
+
+    curr_input_window_graphs = input_window_graphs
+    pred_nodes = []
+
+    # initialize metrics dict 
+    metric_totals = {}
+    for metric in metric_funcs:
+        metric_totals[metric.__name__.lower()] = 0
+
+    for i in range(n_rollout_steps):
+        pred_graphs_list = state.apply_fn(state.params, curr_input_window_graphs, rngs=rngs) 
+        pred_graph = pred_graphs_list[0]
+
+        # retrieve the new input window 
+        curr_input_window_graphs = curr_input_window_graphs[1:] + [pred_graph]
+
+        preds = pred_graph.nodes
+
+        targets = target_window_graphs[i].nodes
+
+        # compute metrics
+        for metric in metric_funcs:
+            metric_val = metric(targets=targets, preds=preds)
+            metric_totals[metric.__name__.lower()] += metric_val
+    
+
+        pred_nodes.append(preds) # Side-effects aren't allowed in JAX-transformed functions, and appending to a list is a side effect ??
+
+    # get metrics averaged over rollout 
+    metric_avg = {}
+    for metric in metric_funcs:
+        metric_avg[metric.__name__.lower()] = (
+            metric_totals[metric.__name__.lower()] / n_rollout_steps)
+
+
+    return metric_avg, pred_nodes
+
+
 def rollout(state: train_state.TrainState, 
                 input_window_graphs: Iterable[jraph.GraphsTuple],
                 # target_window_graphs: Iterable[jraph.GraphsTuple],
@@ -209,15 +256,7 @@ def rollout(state: train_state.TrainState,
         curr_input_window_graphs = curr_input_window_graphs[1:] + [pred_graph]
 
         preds = pred_graph.nodes
-        # targets = target_window_graphs[i].nodes
-    
-        # loss = MSE(targets, preds)
-
         pred_nodes.append(preds) # Side-effects aren't allowed in JAX-transformed functions, and appending to a list is a side effect ??
-
-        # total_loss += loss
-
-    # avg_loss = total_loss / n_rollout_steps
 
     return pred_nodes # list of jnp arrays of size (36, 2)
 
@@ -230,6 +269,23 @@ def rollout(state: train_state.TrainState,
 @flax.struct.dataclass
 class EvalMetrics(metrics.Collection):
     loss: metrics.Average.from_output('loss')
+    # the loss value is passed in as a named param. it can be either single step 
+    # or rollout loss, and is chosen in the training step, so we do not need to 
+    # specify it here. 
+
+@flax.struct.dataclass
+class EvalMetricsSuite(metrics.Collection):
+    mse: metrics.Average.from_output('mse')
+    mb: metrics.Average.from_output('mb')
+    me: metrics.Average.from_output('me')
+    rmse: metrics.Average.from_output('rmse')
+    crmse: metrics.Average.from_output('crmse')
+    nmb: metrics.Average.from_output('nmb')
+    nme: metrics.Average.from_output('nme')
+    fb: metrics.Average.from_output('fb')
+    fe: metrics.Average.from_output('fe')
+    r: metrics.Average.from_output('r')
+    d: metrics.Average.from_output('d')
     # the loss value is passed in as a named param. it can be either single step 
     # or rollout loss, and is chosen in the training step, so we do not need to 
     # specify it here. 
@@ -276,7 +332,8 @@ def train_step_fn(
         loss, pred_nodes = rollout_loss(
            state=curr_state, input_window_graphs=input_window_graphs, 
            target_window_graphs=target_window_graphs, n_rollout_steps=n_rollout_steps, 
-           rngs=rngs)
+           rngs=rngs,
+           )
         return loss, pred_nodes
         # TODO trace where rngs is used, this is unclear. dropout? 
 
@@ -291,6 +348,43 @@ def train_step_fn(
 train_step = jax.jit(train_step_fn, static_argnames=["n_rollout_steps"])
 
 
+def evaluate_step_metric_suite_fn(
+    state: train_state.TrainState,
+    n_rollout_steps: int,
+    input_window_graphs: Iterable[jraph.GraphsTuple],
+    target_window_graphs: Iterable[jraph.GraphsTuple],
+) -> Tuple[metrics.Collection, jnp.ndarray]:
+    """Computes metrics over a set of graphs."""
+
+    # Get node predictions and loss 
+    metric_avg, pred_nodes = rollout_metric_suite(
+        metric_funcs=[MSE, MB, ME, RMSE, CRMSE, NMB, NME, FB, FE, R, R2, D, pearson], 
+        state=state, 
+        input_window_graphs=input_window_graphs, 
+        target_window_graphs=target_window_graphs, 
+        n_rollout_steps=n_rollout_steps, rngs=None,
+        )
+
+    eval_metrics_dict = EvalMetricsSuite.single_from_model_output(
+        mse = metric_avg["mse"],
+        mb = metric_avg["mb"],
+        me = metric_avg["me"],
+        rmse = metric_avg["rmse"],
+        crmse = metric_avg["crmse"],
+        nmb = metric_avg["nmb"],
+        nme = metric_avg["nme"],
+        fb = metric_avg["fb"],
+        fe = metric_avg["fe"],
+        r = metric_avg["r"],
+        r2 = metric_avg["r2"],
+        d = metric_avg["d"],
+        pearson = metric_avg["pearson"],
+    ) 
+
+    return eval_metrics_dict, pred_nodes
+
+evaluate_step_metric_suite = jax.jit(evaluate_step_metric_suite_fn, static_argnames=["n_rollout_steps"])
+
 def evaluate_step_fn(
     state: train_state.TrainState,
     n_rollout_steps: int,
@@ -304,7 +398,7 @@ def evaluate_step_fn(
     loss, pred_nodes = rollout_loss(state=state, 
                                     input_window_graphs=input_window_graphs, 
                                     target_window_graphs=target_window_graphs, 
-                                    n_rollout_steps=n_rollout_steps, rngs=None) 
+                                    n_rollout_steps=n_rollout_steps, rngs=None)
 
     eval_metrics_dict = EvalMetrics.single_from_model_output(loss=loss)
 
@@ -317,7 +411,8 @@ def evaluate_model(
     n_rollout_steps: int,
     datasets: Dict[str, Dict[str, Iterable[jraph.GraphsTuple]]], 
     # first key = train/test/val, second key = input/target 
-    splits: Iterable[str], # e.g. ["val", "test"]
+    splits: Iterable[str], # e.g. ["val", "test"],
+    all_metrics: bool = False,
 ) -> Dict[str, metrics.Collection]:
     """Evaluates the model on metrics over the specified splits."""
 
@@ -330,14 +425,20 @@ def evaluate_model(
         input_data = datasets[split]['inputs']
         target_data = datasets[split]['targets']
 
+        if all_metrics:
+            eval_fn = evaluate_step_metric_suite
+        else: # just MSE 
+            eval_fn = evaluate_step
+
         # loop over individual windows in the dataset 
         for (input_window_graphs, target_window_graphs) in zip(
             input_data, target_data):
-            split_metrics_update, _ = evaluate_step(
+            split_metrics_update, _ = eval_fn(
                 state=state, 
                 n_rollout_steps=n_rollout_steps, 
                 input_window_graphs=input_window_graphs, 
-                target_window_graphs=target_window_graphs)
+                target_window_graphs=target_window_graphs,
+                )
 
             # Update metrics.
             if split_metrics is None:
@@ -426,7 +527,8 @@ def train_and_evaluate_with_data(
     # The input pipeline cannot be checkpointed in its current form,
     # due to the use of stateful operations.
     checkpoint_dir = os.path.join(workdir, 'checkpoints')
-    ckpt = checkpoint.Checkpoint(checkpoint_dir, max_to_keep=2)
+    ckpt = checkpoint.Checkpoint(checkpoint_dir, 
+                                 max_to_keep=config.max_checkpts_to_keep)
     state = ckpt.restore_or_initialize(state)
     initial_step = int(state.step) # state.step is 0-indexed 
     init_epoch = initial_step // len(input_data) # 0-indexed 
@@ -435,13 +537,17 @@ def train_and_evaluate_with_data(
     eval_net = create_model(config, deterministic=True)
     eval_state = state.replace(apply_fn=eval_net.apply)
 
-    num_train_steps = config.epochs * len(train_set['inputs'])
+    num_train_steps = config.epochs * len(train_set['inputs'])  
     # Hooks called periodically during training.
     report_progress = periodic_actions.ReportProgress(
         num_train_steps=num_train_steps, writer=writer
     )
     profiler = periodic_actions.Profile(num_profile_steps=5, logdir=workdir)
     hooks = [report_progress, profiler]
+    if "eval_all_metrics" in config._fields.keys():
+        eval_all_metrics = config.eval_all_metrics
+    else:
+        eval_all_metrics = False
 
     # Begin training loop.
     logging.info('Starting training.')
@@ -468,14 +574,13 @@ def train_and_evaluate_with_data(
                     n_rollout_steps=n_rollout_steps, 
                     input_window_graphs=input_window_graphs, 
                     target_window_graphs=target_window_graphs, 
-                    rngs={'dropout': dropout_rng}
+                    rngs={'dropout': dropout_rng},
                 )
                 if jnp.isnan(metrics_update.loss.total):
                     # TODO is it ok to raise the prune even if the pruner doesn't say should prune? 
                     logging.warning(f'loss is nan for step {step} (in epoch {epoch})')
                     if trial:
                         raise optuna.TrialPruned()
-                    # raise Exception("training losses for this graph are nan; aborting now")
 
                 # Update metrics.
                 if train_metrics is None:
@@ -496,7 +601,7 @@ def train_and_evaluate_with_data(
         # Log, if required.
         if epoch % config.log_every_epochs == 0 or is_last_epoch:
             writer.write_scalars(
-                step, add_prefix_to_keys(train_metrics.compute(), 'train')
+                epoch, add_prefix_to_keys(train_metrics.compute(), 'train')
             )
             train_metrics = None
 
@@ -510,10 +615,12 @@ def train_and_evaluate_with_data(
                     state=eval_state, 
                     n_rollout_steps=n_rollout_steps, 
                     datasets=datasets, 
-                    splits=splits)
+                    splits=splits,
+                    all_metrics=eval_all_metrics,
+                )
             for split in splits:
                 writer.write_scalars(
-                    step, add_prefix_to_keys(eval_metrics_dict[split].compute(), split)
+                    epoch, add_prefix_to_keys(eval_metrics_dict[split].compute(), split)
                 )
 
             # prune hyperparameter tuning, if enabled 
@@ -529,3 +636,99 @@ def train_and_evaluate_with_data(
             with report_progress.timed('checkpoint'):
                 ckpt.save(state)
     return state, train_metrics, eval_metrics_dict
+
+
+# define loss functions 
+def MSE(targets, preds):
+    """ mean squared error """
+    mse = jnp.mean(jnp.square(preds - targets))
+    return mse 
+
+# the below metrics are taken from Mia's notebook and modified to use jax 
+
+# mean bias
+def MB(targets, preds):
+    MAB = jnp.mean(jnp.subtract(preds, targets))
+    return MAB
+
+# mean error
+def ME(targets,preds):
+    MAE = jnp.mean(jnp.absolute(jnp.subtract(preds, targets)))
+    return MAE
+
+# root means square error
+def RMSE(targets, preds):
+    RMS = jnp.sqrt(jnp.mean(jnp.square(jnp.subtract(preds, targets))))
+    return RMS
+
+# centered root means square error
+def CRMSE(targets, preds):
+    pred_minus_mean = jnp.subtract(preds, jnp.mean(preds))
+    obs_minus_mean = jnp.subtract(targets, jnp.mean(targets))
+    pred_minus_obs_squared = jnp.square(jnp.subtract(pred_minus_mean, obs_minus_mean))
+
+    CRMS = jnp.sqrt(jnp.mean(pred_minus_obs_squared))
+    return CRMS
+
+# normalized mean bias
+def NMB(targets, preds):
+    pred_minus_test = jnp.subtract(preds, targets)
+
+    nmb = jnp.true_divide(jnp.sum(pred_minus_test), jnp.sum(preds))
+    return nmb
+
+# normalized mean error
+def NME(targets, preds):
+    N = len(targets)
+    abs_pred_minus_test = jnp.abs(jnp.subtract(preds, targets))
+
+    nme = jnp.true_divide(jnp.sum(abs_pred_minus_test), jnp.abs(jnp.sum(preds)))
+    return nme
+
+# fractional bias
+def FB(targets,preds):
+    pred_minus_test = jnp.subtract(preds, targets)
+    pred_plus_test  = jnp.add(preds, targets)
+
+    fb = 2*jnp.sum(pred_minus_test)/jnp.sum(pred_plus_test)
+    return fb
+
+# fractional error
+def FE(targets,preds):
+    pred_plus_test = jnp.add(preds, targets)
+    abs_pred_minus_test = jnp.abs(jnp.subtract(preds, targets))
+
+    FE = 2*jnp.sum(abs_pred_minus_test)/jnp.abs(jnp.sum(pred_plus_test))
+    return FE
+
+# correlation coefficient (r)
+def R(targets, preds):
+    pred_var = preds - jnp.mean(preds)
+    test_var = targets - jnp.mean(targets)
+    PxT = jnp.multiply(pred_var, test_var)
+    pred_var_squared = jnp.square(pred_var)
+    test_var_squared = jnp.square(test_var)
+
+    PxT_sum = jnp.sum(PxT)
+    denom = jnp.sqrt(jnp.multiply(jnp.sum(pred_var_squared), jnp.sum(test_var_squared)))
+    R = jnp.true_divide(PxT_sum, denom)
+    return R
+
+def R2(targets, preds):
+    return jnp.square(R(targets=targets, preds=preds))
+
+# index of agreement (d)
+def D(targets, preds):
+    obs_var = targets - jnp.mean(targets)
+    pred_minus_test = jnp.subtract(preds, targets)
+    pred_minus_test_squared = jnp.square(pred_minus_test)
+    pred_minus_test_mean = jnp.subtract(preds, jnp.mean(targets))
+    denom = jnp.add(jnp.abs(pred_minus_test_mean), jnp.abs(obs_var)) # TODO verify it was ok to change K.abs to np.abs 
+    denom_squared = jnp.square(denom) # TODO are we supposed to use this function somewhere? 
+
+    frac = jnp.true_divide(jnp.sum(pred_minus_test_squared), jnp.sum(denom))
+    d = jnp.subtract(1, frac)
+    return d
+
+def pearson(targets, preds):
+    return jax.scipy.stats.pearsonr(x=targets, y=preds)

@@ -135,7 +135,7 @@ def plot_predictions(
         node, # 0-indexed 
         plot_mode, # i.e. "train"/"val"/"test"
         datasets=None,
-        plot_all=True, # if false, only plot the first 100 
+        plot_days=None, # if None, plot entire time series; otherwise plot specified number of days 
         title=''):
     assert plot_ith_rollout_step < config.output_steps
     assert plot_mode in ["train", "val", "test"]
@@ -184,14 +184,17 @@ def plot_predictions(
     node_targets = []
 
     # loop over individual windows in the dataset 
-    plot_count = len(input_data) if plot_all else 100
+    # TODO try batching to see if its faster? 
+
+    if plot_days is not None:
+        plot_count = plot_days * config.time_resolution / 5 / config.timestep_duration
+    else:
+        plot_count = len(input_data)
+
     for i, (input_window_graphs, target_window_graphs) in enumerate(zip(
         input_data, target_data)):
         if i >= plot_count:
             break
-        # print('target_window_graphs[0].nodes', target_window_graphs[0].nodes)
-        # print('target_window_graphs[1].nodes', target_window_graphs[1].nodes)
-        # pdb.set_trace()
         pred_nodes_list = rollout(state=state,
                                   input_window_graphs=input_window_graphs,
                                   n_rollout_steps=config.output_steps,
@@ -200,70 +203,25 @@ def plot_predictions(
         
         # get the last array of predictions, which will correspond to the ith rollout step that we care about 
         ith_rollout_pred = pred_nodes_list[plot_ith_rollout_step]
-        # print('type(ith_rollout_pred)', type(ith_rollout_pred))
-        # print('(ith_rollout_pred)', (ith_rollout_pred.shape))
         node_pred = ith_rollout_pred[node, :] # jnp array with shape (1, 2)
-        # print('node_pred.shape', node_pred.shape)
-        # print('node_pred', node_pred)
         node_preds.append(node_pred)
 
         # also grab the target nodes while we're in this loop 
         ith_rollout_target = target_window_graphs[plot_ith_rollout_step].nodes
-        # print('type(ith_rollout_target)', type(ith_rollout_target))
-        # print('ith_rollout_target.shape', ith_rollout_target.shape)
-        # pdb.set_trace()
         node_target = ith_rollout_target[node, :] # jnp array with shape (1, 2)
-        # print('node_target.shape', node_target.shape)
         node_targets.append(node_target)
 
     node_preds = np.vstack(node_preds)
     node_targets = np.vstack(node_targets)
 
-    # print('type(node_preds)', type(node_preds))
-    # print((node_preds))
-    # print('type(node_targets)', type(node_targets))
-    # print((node_targets))
+    # reconstruct timesteps
+    steps = np.arange(plot_count)
+    # convert timesteps from step index to day 
+    t_days = steps * config.timestep_duration * 5 / config.time_resolution 
 
-    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(20, 8))
-    if title == '':
-        fig.suptitle(f"predictions for node {node}", size=28)
-    else:
-        fig.suptitle(title, size=28)
-    ax0.set_title("X1 (i.e. atmospheric variable) for node {}".format(node),
-                  size=20)
-    ax1.set_title("X2 (i.e. oceanic variable) for node {}".format(node),
-                  size=20)
-    plt.xlabel('time (days)', size=16)
-
-    # inputs_x1 = [
-    #     window[0].nodes[node][0] for window in dataset['train']['inputs']
-    # ] # take only the first graph in every window
-    # inputs_x2 = [
-    #     window[0].nodes[node][1] for window in dataset['train']['inputs']
-    # ] # take only the first graph in every window
-
-    
-
-    # preds_x1 = [pred[node][0] for pred in preds]
-    # preds_x2 = [pred[node][1] for pred in preds]
-
-    # targets_x1 = jnp.array(
-    #     np.ravel([[
-    #         data_dict['target'][i].nodes[node][0]
-    #         for i in range(n_rollout_steps)
-    #     ] for data_dict in data_dict_list]))
-    # targets_x2 = jnp.array(
-    #     np.ravel([[
-    #         data_dict['target'][i].nodes[node][1]
-    #         for i in range(n_rollout_steps)
-    #     ] for data_dict in data_dict_list]))
-
-    # targets_t = jnp.array(
-    #     np.ravel([[(t + i * timestep_duration)
-    #                for i in range(1, n_rollout_steps + 1)]
-    #               for t in range(len(data_dict_list))]))
-
-    # TODO reconstruct timesteps
+    # set up plot
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(15, 10), sharex=True) 
+    # default dimensions are in units
 
     # TODO do we even care about plotting inputs? 
     # # plot inputs
@@ -272,37 +230,51 @@ def plot_predictions(
 
     # plot rollout targets
     ax0.plot(
-        # range(len(node_targets)), # TODO replace with actual timesteps 
+        t_days,
         node_targets[:, 0],
         # s=5,
         alpha=0.8,
-        label='targets',
-        c='blue')
+        linewidth=4,
+        label='Target',
+        c='#7170b5')
     ax1.plot(
-        # range(len(node_targets)), # TODO replace with actual timesteps 
+        t_days,
         node_targets[:, 1], 
         alpha=0.8, 
-        label='targets', 
-        c='blue')
+        linewidth=4,
+        label='Target', 
+        c='#7170b5')
 
     # plot predictions
     ax0.plot(
-        # range(len(node_preds)), # TODO replace with actual timesteps 
+        t_days,
         node_preds[:, 0],
         # s=5,
         alpha=0.8,
-        label='preds',
+        linewidth=4,
+        label='Prediction',
         c='orange')
     ax1.plot(
-        # range(len(node_preds)), # TODO replace with actual timesteps 
+        t_days,
         node_preds[:, 1],
         # s=5,
         alpha=0.8,
-        label='preds',
+        linewidth=4,
+        label='Prediction',
         c='orange')
 
-    ax0.legend()
-    ax1.legend()
+    if title == '':
+        fig.suptitle(f"{plot_mode.title()} predictions for node {node}; rollout step {plot_ith_rollout_step}", size=45)
+    else:
+        fig.suptitle(title, size=45)
+    # ax0.set_title("X", size=40)
+    # ax1.set_title("Y", size=40)
+    plt.xlabel('Time (days)', size=35, labelpad=30)
+    ax0.set_ylabel("X", size=35)
+    ax1.set_ylabel("Y", size=35)
+
+    ax0.legend(loc="upper right")
+    # ax1.legend(loc="upper left")
 
 def plot_predictions_old(
         data_dict_list,
