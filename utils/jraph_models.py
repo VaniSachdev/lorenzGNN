@@ -24,7 +24,7 @@ def add_graphs_tuples_nodes(
 class MLP(nn.Module):
     """ A multi-layer perceptron.
     
-        Copied from Flax example models. 
+        Copied from Flax example models. Note that dropout is deactivated if deterministic is True. 
     """
 
     feature_sizes: Sequence[int]
@@ -53,7 +53,7 @@ class MLP(nn.Module):
 class MLPBlock(nn.Module):
     """ A single Graph Network block containing MLP functions. 
     
-        Modified from Flax GN example code. 
+        Modified from Flax GN example code. Note that dropout is deactivated if deterministic is True. 
     """
     dropout_rate: float = 0
     skip_connections: bool = True
@@ -138,6 +138,8 @@ class MLPBlock(nn.Module):
 
 class MLPGraphNetwork(nn.Module):
     """ A complete Graph Network core consisting of a sequence of MLPBlocks. 
+
+        Note that dropout is deactivated if deterministic is True. 
     """
     n_blocks: int # i.e. number of message-passing steps if params are shared
     share_params: bool # whether iterated blocks should be identical or distinct

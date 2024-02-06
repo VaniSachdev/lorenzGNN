@@ -68,51 +68,6 @@ def get_window_indices(n_samples, timestep_duration, input_steps, output_delay,
     return x_windows, y_windows
 
 
-#####################
-# OG Lorenz96 model #
-#####################
-def lorenz96(X, t, K, F):
-    """ Functions defining a single update step in the Lorenz96 system.
-    
-        Copied from Prof. Kavassalis.
-
-        Args: 
-            X (float array, size K): array of X state values
-            t: 
-            K (int): number of points on the circumference
-            F (float): forcing constant
-    """
-    #K-component Lorenz 96 model
-    dX_dt = np.zeros(K)
-    # boundary conditions
-    # (define the wrapping)
-    dX_dt[0] = (X[1] - X[K - 2]) * X[K - 1] - X[0] + F
-    dX_dt[1] = (X[2] - X[K - 1]) * X[0] - X[1] + F
-    dX_dt[K - 1] = (X[0] - X[K - 3]) * X[K - 2] - X[K - 1] + F
-    # Then the general case
-    for i in range(2, K - 1):
-        dX_dt[i] = (X[i + 1] - X[i - 2]) * X[i - 1] - X[i] + F
-    # Return the state derivatives
-    return dX_dt
-
-
-def run_lorenz96(K=36, F=8, number_of_days=30, nudge=True):
-    """ (from Prof. Kavassalis) """
-    X0 = F * np.ones(K)  # Initial state (equilibrium)
-    if nudge == True:
-        X0[random.randint(1, K) -
-           1] = X0[random.randint(1, K) - 1] + random.uniform(
-               0, .01)  # adds our perturbation
-    t = np.arange(0.0, number_of_days,
-                  0.01)  # creates the time points we want to see solutiosn for
-
-    logging.info('starting integration')
-    X = odeint(lorenz96, X0, t, args=(K, F),
-               ixpr=True)  #solves the system of ordinary differential equations
-
-    return t, X, F, K, number_of_days
-
-
 ##################################
 # 2-layer coupled Lorenz96 model #
 ##################################
@@ -250,9 +205,9 @@ def run_download_lorenz96_2coupled(
             F (float): Lorenz96 forcing constant. (K=36 and F=8 corresponds to 
                 an error-doubling time of 2.1 days, similar to the real 
                 atmosphere)
-            c (float): Lorenz96 time-scale ratio ?
-            b (float): Lorenz96 spatial-scale ratio ?
-            h (float): Lorenz96 coupling parameter ?
+            c (float): Lorenz96 time-scale ratio
+            b (float): Lorenz96 spatial-scale ratio
+            h (float): Lorenz96 coupling parameter
             n_steps (int): number of raw timesteps for which to run the ODE 
                 integration of the model (NOTE: this is distinct from the 
                 number of steps in the LorenzDataset/Wrapper object, which is 
@@ -271,7 +226,7 @@ def run_download_lorenz96_2coupled(
             The data can be accessed similar to a dictionary, as follows: 
                 data = np.load(fname, allow_pickle=True)
                 t = data['t'] # array of time points
-                X = data['X'] # array of state values at each time point, shape (?, ?)
+                X = data['X'] # array of state values at each time point, shape (n_steps, K*2)
     """
     # generate data
     t, X, _, _, _ = run_lorenz96_2coupled(K=K, F=F, c=c, b=b, h=h, n_steps=n_steps, resolution=resolution, seed=seed)

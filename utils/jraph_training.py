@@ -400,9 +400,9 @@ def evaluate_step_fn(
                                     target_window_graphs=target_window_graphs, 
                                     n_rollout_steps=n_rollout_steps, rngs=None)
 
-    eval_metrics_dict = EvalMetrics.single_from_model_output(loss=loss)
+    eval_metrics = EvalMetrics.single_from_model_output(loss=loss)
 
-    return eval_metrics_dict, pred_nodes
+    return eval_metrics, pred_nodes
 
 evaluate_step = jax.jit(evaluate_step_fn, static_argnames=["n_rollout_steps"])
 
@@ -414,7 +414,7 @@ def evaluate_model(
     splits: Iterable[str], # e.g. ["val", "test"],
     all_metrics: bool = False,
 ) -> Dict[str, metrics.Collection]:
-    """Evaluates the model on metrics over the specified splits."""
+    """Evaluates the model on metrics over the specified splits (i.e. modes)."""
 
     # Loop over each split independently.
     eval_metrics_dict = {}

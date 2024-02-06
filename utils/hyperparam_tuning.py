@@ -145,7 +145,7 @@ def get_best_trial_config(study):
     best_trial_config.optimizer = study.best_params['optimizer']
     best_trial_config.learning_rate = study.best_params['learning_rate']
     if best_trial_config.optimizer == "sgd":
-        best_trial_config.momentum = study.best_params['momentu,']
+        best_trial_config.momentum = study.best_params['momentum']
 
     # Training hyperparameters.
     # best_trial_config.batch_size = 1 # variable currently not used
@@ -155,7 +155,9 @@ def get_best_trial_config(study):
     # best_trial_config.checkpoint_every_epochs = 10
 
     # GNN hyperparameters.
-    best_trial_config.model = 'MLPBlock'
+    best_trial_config.model = 'MLPGraphNetwork'
+    best_trial_config.n_blocks = study.best_params['n_blocks']
+    best_trial_config.share_params = False
     best_trial_config.dropout_rate = study.best_params['dropout_rate']
     best_trial_config.skip_connections = False # This was throwing a broadcast error in add_graphs_tuples_nodes when this was set to True
     best_trial_config.layer_norm = False # TODO perhaps we want to turn on later
@@ -168,7 +170,7 @@ def get_best_trial_config(study):
     )
     best_trial_config.node_features = (
         2**study.best_params["node_mlp_1_power"],
-        2**study.best_params["node_mlp_2_power"],
+        # 2**study.best_params["node_mlp_2_power"],
         2) 
     # note the last feature size will be the number of features that the graph predicts
     best_trial_config.global_features = None
